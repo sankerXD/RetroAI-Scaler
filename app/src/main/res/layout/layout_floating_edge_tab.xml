@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floatingEdgeTabRoot"
+    android:layout_width="20dp"
+    android:layout_height="72dp"
+    android:background="@drawable/bg_floating_edge_tab"
+    android:alpha="0.25"
+    android:clickable="true"
+    android:focusable="true">
+
+    <View
+        android:layout_width="4dp"
+        android:layout_height="32dp"
+        android:layout_gravity="center"
+        android:background="#FFFFFF" />
+
+</FrameLayout>

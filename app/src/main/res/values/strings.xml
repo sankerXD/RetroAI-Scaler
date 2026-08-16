@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">Retro-AI-Scaler</string>
+    <string name="app_subtitle">RA 模拟器实时 AI 超分外挂层</string>
+    <string name="status_service_running">AI 增强引擎运行中</string>
+    <string name="status_service_stopped">AI 增强引擎已停止</string>
+    <string name="btn_start_service">启动 AI 增强滤镜</string>
+    <string name="btn_stop_service">停止外挂服务</string>
+    <string name="permission_overlay_title">悬浮窗权限 (Overlay)</string>
+    <string name="permission_overlay_desc">用于在 RetroArch 上层显示 AI 渲染画面与悬浮球菜单</string>
+    <string name="permission_usage_title">使用情况访问 (Usage Access)</string>
+    <string name="permission_usage_desc">用于判断 RetroArch 是否在前台。未授予时增强层会一直盖在所有应用上，你将看不见桌面和其他 App。</string>
+    <string name="permission_storage_title">所有文件访问 (All Files)</string>
+    <string name="permission_storage_desc">用于把取景窗自动写进 RetroArch/config 下的核心覆盖配置。RA 主配置在 Android/data 里，安卓 11 起任何应用都无法访问，只能走覆盖配置。</string>
+    <string name="permission_capture_title">屏幕捕获权限 (MediaProjection)</string>
+    <string name="permission_capture_desc">用于获取游戏原生显存帧并在 Native 层直接进行 GPU/AI 增强</string>
+    
+    <!-- Floating Ball & Menu Strings -->
+    <string name="menu_title">Retro AI 控制中心</string>
+</resources>

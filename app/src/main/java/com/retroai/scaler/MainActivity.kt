@@ -1,0 +1,282 @@
+package com.retroai.scaler
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Button
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.retroai.scaler.detector.ForegroundAppMonitor
+import com.retroai.scaler.detector.RetroArchConfigManager
+import com.retroai.scaler.detector.TargetAppPreference
+import com.retroai.scaler.ui.ConsoleType
+import com.retroai.scaler.ui.ProfilePreference
+import com.retroai.scaler.service.OverlayService
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var tvStatusText: TextView
+    private lateinit var tvDeviceInfo: TextView
+    private lateinit var btnToggleService: Button
+    private lateinit var btnGrantOverlay: Button
+    private lateinit var btnGrantUsage: Button
+    private lateinit var btnGrantStorage: Button
+    private lateinit var tvTargetApp: TextView
+    private lateinit var tvConsole: TextView
+    private lateinit var tvOutputPlan: TextView
+    private lateinit var btnPickConsole: Button
+    private lateinit var btnPickTargetApp: Button
+
+    private val foregroundMonitor by lazy { ForegroundAppMonitor(this) }
+
+    private val isServiceRunning: Boolean
+        get() = OverlayService.isRunning
+
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            startOverlayService(result.resultCode, result.data!!)
+        } else {
+            Toast.makeText(this, "未授予录屏捕获权限，无法启动 AI 增强", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        initViews()
+        checkHardwareCapabilities()
+        updatePermissionButtons()
+    }
+
+    private fun initViews() {
+        tvStatusText = findViewById(R.id.tvStatusText)
+        tvDeviceInfo = findViewById(R.id.tvDeviceInfo)
+        btnToggleService = findViewById(R.id.btnToggleService)
+        btnGrantOverlay = findViewById(R.id.btnGrantOverlay)
+        btnGrantUsage = findViewById(R.id.btnGrantUsage)
+        btnGrantStorage = findViewById(R.id.btnGrantStorage)
+
+        btnGrantStorage.setOnClickListener {
+            if (!RetroArchConfigManager.hasAllFilesAccess()) {
+                Toast.makeText(this, "打开「允许管理所有文件」开关", Toast.LENGTH_LONG).show()
+                startActivity(RetroArchConfigManager.allFilesAccessIntent(this))
+            } else {
+                Toast.makeText(this, "所有文件访问已就绪", Toast.LENGTH_SHORT).show()
+            }
+        }
+        tvTargetApp = findViewById(R.id.tvTargetApp)
+        btnPickTargetApp = findViewById(R.id.btnPickTargetApp)
+
+        btnGrantUsage.setOnClickListener {
+            if (!ForegroundAppMonitor.hasUsageAccess(this)) {
+                Toast.makeText(this, "在列表里找到 Retro-AI-Scaler 并打开开关", Toast.LENGTH_LONG).show()
+                startActivity(ForegroundAppMonitor.usageAccessSettingsIntent())
+            } else {
+                Toast.makeText(this, "使用情况访问已就绪", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnPickTargetApp.setOnClickListener { showTargetAppPicker() }
+
+        tvConsole = findViewById(R.id.tvConsole)
+        tvOutputPlan = findViewById(R.id.tvOutputPlan)
+        btnPickConsole = findViewById(R.id.btnPickConsole)
+        btnPickConsole.setOnClickListener { showConsolePicker() }
+
+        btnGrantOverlay.setOnClickListener {
+            if (!Settings.canDrawOverlays(this)) {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+            } else {
+                Toast.makeText(this, "悬浮窗权限已就绪", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnToggleService.setOnClickListener {
+            if (isServiceRunning) {
+                stopOverlayService()
+            } else {
+                requestStartPipeline()
+            }
+        }
+    }
+
+    /** The service can stop itself while this Activity stays resumed (floating
+     *  menu, notification, watchdog), so poll instead of relying on onResume. */
+    private val stateRefreshRunnable = object : Runnable {
+        override fun run() {
+            updateServiceStateUi()
+            btnToggleService.postDelayed(this, 1000)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updatePermissionButtons()
+        btnToggleService.removeCallbacks(stateRefreshRunnable)
+        btnToggleService.post(stateRefreshRunnable)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        btnToggleService.removeCallbacks(stateRefreshRunnable)
+    }
+
+    private fun updatePermissionButtons() {
+        val hasOverlay = Settings.canDrawOverlays(this)
+        btnGrantOverlay.text = if (hasOverlay) "已授权 ✓" else "授权"
+        btnGrantOverlay.isEnabled = !hasOverlay
+
+        val hasUsage = ForegroundAppMonitor.hasUsageAccess(this)
+        btnGrantUsage.text = if (hasUsage) "已授权 ✓" else "授权"
+        btnGrantUsage.isEnabled = !hasUsage
+
+        val hasStorage = RetroArchConfigManager.hasAllFilesAccess()
+        btnGrantStorage.text = if (hasStorage) "已授权 ✓" else "授权"
+        btnGrantStorage.isEnabled = !hasStorage
+
+        updateTargetAppLabel()
+        updateConsoleLabel()
+    }
+
+    /**
+     * The platform is chosen here rather than only in the floating menu: the
+     * service writes RetroArch's config the moment enhancement starts, and it
+     * needs to know which core to configure before any menu has been opened.
+     */
+    private fun showConsolePicker() {
+        val consoles = ConsoleType.values()
+        val labels = consoles
+            .map { "${it.displayName}  ${it.nativeWidth}×${it.nativeHeight}" }
+            .toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("选择游玩机种")
+            .setItems(labels) { _, which ->
+                // Only the console key changes; that console's own saved
+                // settings are then loaded as-is.
+                ProfilePreference.setConsole(this, consoles[which])
+                updateConsoleLabel()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun updateConsoleLabel() {
+        val profile = ProfilePreference.load(this)
+        tvConsole.text = "${profile.console.displayName} " +
+                "${profile.console.nativeWidth}×${profile.console.nativeHeight}"
+
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        val out = profile.getOutputRect(metrics.widthPixels, metrics.heightPixels)
+        val k = profile.getOutputScale(metrics.widthPixels, metrics.heightPixels)
+        val src = profile.getPlannedSourceRect(metrics.widthPixels, metrics.heightPixels)
+        tvOutputPlan.text = "取景窗 ${src.width()}×${src.height()} ${profile.sourceCorner.displayName}" +
+                " → 输出 ${out.width()}×${out.height()}（整数 ${k}x）\n" +
+                "启动时会自动写入 RetroArch 配置"
+    }
+
+    private fun updateTargetAppLabel() {
+        val stored = TargetAppPreference.get(this)
+        val detected = stored ?: foregroundMonitor.detectRetroArch()
+        tvTargetApp.text = if (detected == null) {
+            "目标应用: 未找到 RetroArch，请手动选择"
+        } else {
+            val suffix = if (stored == null) "（自动检测）" else ""
+            "目标应用: ${foregroundMonitor.labelFor(detected)}$suffix"
+        }
+    }
+
+    /**
+     * The overlay follows exactly one app. Defaults to RetroArch but any
+     * emulator works, so let the user pick.
+     */
+    private fun showTargetAppPicker() {
+        val apps = foregroundMonitor.launchableApps()
+        if (apps.isEmpty()) {
+            Toast.makeText(this, "没有可选应用", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = apps.map { "${it.label}\n${it.packageName}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("选择要增强的应用")
+            .setItems(labels) { _, which ->
+                TargetAppPreference.set(this, apps[which].packageName)
+                updateTargetAppLabel()
+                if (isServiceRunning) {
+                    Toast.makeText(this, "重启 AI 增强后生效", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** The service can stop itself (watchdog, notification, menu), so the
+     *  button must be driven by the service's real state, not a local flag. */
+    private fun updateServiceStateUi() {
+        if (isServiceRunning) {
+            tvStatusText.text = getString(R.string.status_service_running)
+            tvStatusText.setTextColor(ContextCompat.getColor(this, R.color.accent_green))
+            btnToggleService.text = getString(R.string.btn_stop_service)
+            btnToggleService.setBackgroundResource(R.drawable.bg_card)
+        } else {
+            tvStatusText.text = getString(R.string.status_service_stopped)
+            tvStatusText.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+            btnToggleService.text = getString(R.string.btn_start_service)
+            btnToggleService.setBackgroundResource(R.drawable.bg_btn_primary)
+        }
+    }
+
+    private fun checkHardwareCapabilities() {
+        val abi = android.os.Build.SUPPORTED_ABIS.joinToString(", ")
+        val cores = Runtime.getRuntime().availableProcessors()
+        // Report what was actually detected - the big cluster is discovered at
+        // runtime from cpufreq, not assumed to be a specific SoC.
+        val hwInfo = "SoC: ${android.os.Build.HARDWARE} | CPU Cores: $cores | ABI: $abi\n" +
+                "推理线程自动绑定最高频大核簇，NCNN FP16 / ARM NEON"
+        tvDeviceInfo.text = hwInfo
+    }
+
+    private fun requestStartPipeline() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(mpManager.createScreenCaptureIntent())
+    }
+
+    private fun startOverlayService(resultCode: Int, data: Intent) {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            putExtra(OverlayService.EXTRA_PROJECTION_RESULT_CODE, resultCode)
+            putExtra(OverlayService.EXTRA_PROJECTION_DATA, data)
+        }
+        ContextCompat.startForegroundService(this, intent)
+
+        Toast.makeText(
+            this,
+            "AI 增强已启动。切回 RetroArch，把画面对齐到粉色取景框内",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    private fun stopOverlayService() {
+        stopService(Intent(this, OverlayService::class.java))
+    }
+}

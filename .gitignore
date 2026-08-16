@@ -1,0 +1,36 @@
+# Build output
+/app/build/
+/build/
+/app/.cxx/
+.gradle/
+*.apk
+*.aab
+
+# Local toolchain paths (machine specific)
+local.properties
+
+# Release keystores must never be committed. debug.keystore IS committed on
+# purpose so local and CI debug builds share one signature (see app/build.gradle.kts).
+*.jks
+release.keystore
+keystore.properties
+
+# Prebuilt ncnn (77MB) - fetched by setup_toolchain.sh
+/app/src/main/cpp/libs/
+
+# Reference clone of RetroArch slang-shaders, not part of this project
+/crt/
+
+# Python venv used for model training
+.venv/
+__pycache__/
+
+# Editor / tooling local config
+.idea/
+.vscode/
+.claude/
+*.iml
+
+# OS junk
+.DS_Store
+Thumbs.db

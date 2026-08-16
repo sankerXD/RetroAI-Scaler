@@ -1,0 +1,18 @@
+<resources>
+    <color name="primary">#00E5FF</color>
+    <color name="primary_variant">#00B0FF</color>
+    <color name="secondary">#7C4DFF</color>
+    <color name="background_dark">#121418</color>
+    <color name="surface_card">#1E222B</color>
+    <color name="surface_card_border">#2C3240</color>
+    <color name="surface_floating">#E6181B22</color>
+    <color name="text_primary">#F0F4F8</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_accent">#00E5FF</color>
+    <color name="accent_green">#00E676</color>
+    <color name="accent_orange">#FF9100</color>
+    <color name="accent_red">#FF5252</color>
+    <color name="floating_ball_bg">#D91E2433</color>
+    <color name="floating_ball_border">#5500E5FF</color>
+    <color name="floating_edge_tab_bg">#8000E5FF</color>
+</resources>
