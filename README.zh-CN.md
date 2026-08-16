@@ -1,6 +1,6 @@
 <div align="center">
 
-# Retro-AI-Scaler
+# RetroAI-Scaler
 
 **安卓掌机上的 RetroArch 实时 AI 画面增强**
 
@@ -74,7 +74,6 @@ Retro-AI-Scaler 以**原始分辨率**捕获 RetroArch 的画面，重建之后�
 ./gradlew assembleDebug
 ```
 
-模型训练和实现细节见 [AGENT.md](AGENT.md)。
 
 ## 致谢
 

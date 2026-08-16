@@ -25,6 +25,9 @@ keystore.properties
 .venv/
 __pycache__/
 
+# Local development notes, not published
+AGENT.md
+
 # Editor / tooling local config
 .idea/
 .vscode/

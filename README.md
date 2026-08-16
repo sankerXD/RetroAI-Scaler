@@ -1,6 +1,6 @@
 <div align="center">
 
-# Retro-AI-Scaler
+# RetroAI-Scaler
 
 **Real-time AI picture enhancement for RetroArch on Android handhelds**
 
@@ -83,7 +83,6 @@ configuration is restored on the way out.
 ./gradlew assembleDebug
 ```
 
-Model training and the implementation notes live in [AGENT.md](AGENT.md).
 
 ## Credits
 
