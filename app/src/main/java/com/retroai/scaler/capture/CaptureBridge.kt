@@ -75,6 +75,27 @@ class CaptureBridge(
             Log.w(TAG, "MediaProjection stopped by the system or the user.")
             onProjectionStopped()
         }
+
+        // DIAGNOSTIC ONLY - log, no behaviour attached yet.
+        //
+        // These two arrive from API 34 and, as far as the docs describe them,
+        // only for a single-app capture: they report the captured app's content
+        // size and whether it is on screen. Whole-screen capture has no
+        // "captured content" separate from the display, so it should stay
+        // silent. If that holds, this is how the service can tell which mode
+        // the user actually picked in the consent dialog - the dialog offers
+        // both and there is no API to force the single-app one, while the two
+        // modes need different geometry.
+        //
+        // Overriding is safe below API 34: the framework simply never calls
+        // them.
+        override fun onCapturedContentResize(width: Int, height: Int) {
+            Log.i(TAG, "CAPTURE-MODE-PROBE onCapturedContentResize ${width}x${height}")
+        }
+
+        override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+            Log.i(TAG, "CAPTURE-MODE-PROBE onCapturedContentVisibilityChanged visible=$isVisible")
+        }
     }
 
     @SuppressLint("WrongConstant")

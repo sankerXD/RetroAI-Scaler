@@ -183,14 +183,16 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeSetGeometry(
     jobject /* this */,
     jint srcX, jint srcY, jint srcW, jint srcH,
     jint outX, jint outY, jint outW, jint outH,
-    jboolean showSourceGuide
+    jboolean showSourceGuide,
+    jboolean protectSource
 ) {
     std::lock_guard<std::mutex> lock(gPipelineMutex);
     if (gRenderer) {
         gRenderer->setGeometry(
             RectI{srcX, srcY, srcW, srcH},
             RectI{outX, outY, outW, outH},
-            showSourceGuide == JNI_TRUE
+            showSourceGuide == JNI_TRUE,
+            protectSource == JNI_TRUE
         );
     }
 }
@@ -398,6 +400,30 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeRecalibrateCrop(
         gFrameCropper->forceRecalibrate();
         ALOGI("Auto-crop recalibration requested.");
     }
+}
+
+/**
+ * Kicks off the probe that decides whether our overlay is inside the capture,
+ * i.e. whether the user granted whole-screen or single-app capture. Frames have
+ * to be flowing; the answer lands a handful of frames later.
+ */
+JNIEXPORT void JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeRequestCaptureModeProbe(
+    JNIEnv* /* env */,
+    jobject /* this */
+) {
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    if (gRenderer) gRenderer->requestCaptureModeProbe();
+}
+
+/** -1 still unknown, 0 single-app, 1 whole-screen. */
+JNIEXPORT jint JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeGetCaptureMode(
+    JNIEnv* /* env */,
+    jobject /* this */
+) {
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    return gRenderer ? (jint)gRenderer->captureModeResult() : (jint)-1;
 }
 
 JNIEXPORT jboolean JNICALL

@@ -40,6 +40,7 @@ uniform vec4 uSourceRect;  // x, y, w, h
 uniform vec4 uOutputRect;  // x, y, w, h
 uniform vec2 uNativeRes;   // console native resolution, e.g. 240x160
 uniform float uAiScale;    // ESPCN reconstruction factor: uYHiTex is uNativeRes * this
+uniform int uProtectSource; // 1 = never paint over the capture window
 uniform int uAiEnabled;
 uniform float uScanlineIntensity;
 uniform float uMaskStrength;
@@ -164,9 +165,13 @@ void main() {
         }
     }
 
-    // Never paint over the capture source, and never paint outside the
-    // configured output area.
-    if (inside(px, uSourceRect)) discard;
+    // Never paint over the capture source - but ONLY when our output is inside
+    // the capture. Under whole-screen capture, painting there would feed our
+    // own output back in and the picture self-destructs within a few frames.
+    // Under single-app capture we are not in the mirror at all, and punching
+    // this hole is precisely what leaves the small native picture showing
+    // through the middle of the enhanced one.
+    if (uProtectSource != 0 && inside(px, uSourceRect)) discard;
     if (!inside(px, uOutputRect)) discard;
 
     vec2 uv = (px - uOutputRect.xy) / uOutputRect.zw;
@@ -480,6 +485,7 @@ void GlRenderer::initGLResources() {
         uni_.outputRect  = glGetUniformLocation(oesPassProgram_, "uOutputRect");
         uni_.nativeRes   = glGetUniformLocation(oesPassProgram_, "uNativeRes");
         uni_.aiScale     = glGetUniformLocation(oesPassProgram_, "uAiScale");
+        uni_.protectSource = glGetUniformLocation(oesPassProgram_, "uProtectSource");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
         uni_.scanline    = glGetUniformLocation(oesPassProgram_, "uScanlineIntensity");
         uni_.lcdGrid     = glGetUniformLocation(oesPassProgram_, "uMaskStrength");
@@ -511,15 +517,17 @@ void GlRenderer::initGLResources() {
             std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-void GlRenderer::setGeometry(const RectI& source, const RectI& output, bool showSourceGuide) {
+void GlRenderer::setGeometry(const RectI& source, const RectI& output, bool showSourceGuide,
+                             bool protectSource) {
     sourceRect_ = source;
     outputRect_ = output;
     showSourceGuide_ = showSourceGuide;
+    protectSource_ = protectSource;
     hasGeometry_ = source.valid() && output.valid();
-    ALOGI("Geometry: source=(%d,%d %dx%d) output=(%d,%d %dx%d) guide=%d valid=%d",
+    ALOGI("Geometry: source=(%d,%d %dx%d) output=(%d,%d %dx%d) guide=%d protect=%d valid=%d",
           source.x, source.y, source.w, source.h,
           output.x, output.y, output.w, output.h,
-          showSourceGuide ? 1 : 0, hasGeometry_ ? 1 : 0);
+          showSourceGuide ? 1 : 0, protectSource ? 1 : 0, hasGeometry_ ? 1 : 0);
 }
 
 void GlRenderer::setMaskType(int type) {
@@ -810,8 +818,8 @@ bool GlRenderer::getDetectedRect(RectI& out) const {
  * the bounding box of everything that is not black. RetroArch clears the area
  * around its viewport to black, so that box IS the emulator's picture.
  */
-void GlRenderer::runDetectionPass(GLuint externalTexId, int frameWidth, int frameHeight) {
-    if (yExtractProgram_ == 0 || aiFbo_ == 0) return;
+bool GlRenderer::readReducedFrame(GLuint externalTexId, int frameWidth, int frameHeight) {
+    if (yExtractProgram_ == 0 || aiFbo_ == 0) return false;
 
     if (detectTex_ == 0) {
         glGenTextures(1, &detectTex_);
@@ -831,7 +839,7 @@ void GlRenderer::runDetectionPass(GLuint externalTexId, int frameWidth, int fram
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         ALOGE("detection FBO incomplete");
-        return;
+        return false;
     }
 
     glViewport(0, 0, DETECT_W, DETECT_H);
@@ -852,6 +860,116 @@ void GlRenderer::runDetectionPass(GLuint externalTexId, int frameWidth, int fram
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, DETECT_W, DETECT_H, GL_RGBA, GL_UNSIGNED_BYTE, detectBuffer_.data());
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return true;
+}
+
+/**
+ * Marker geometry, shared by the painter and the sampler so they cannot drift.
+ * Top-left corner, an eighth of the screen each way - big enough to survive the
+ * reduction to 320x240, small enough that the flash is barely noticeable.
+ */
+static const int PROBE_DIV = 8;
+/** Opaque magenta: nothing a game draws is likely to sit flat on this. */
+static const float PROBE_R = 1.0f, PROBE_G = 0.0f, PROBE_B = 1.0f;
+
+void GlRenderer::drawProbeMarker(bool on) {
+    glViewport(0, 0, screenWidth_, screenHeight_);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    if (on) {
+        const int w = screenWidth_ / PROBE_DIV;
+        const int h = screenHeight_ / PROBE_DIV;
+        // Scissor is bottom-left based; the marker is defined top-left.
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, screenHeight_ - h, w, h);
+        glClearColor(PROBE_R, PROBE_G, PROBE_B, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
+    }
+    eglSwapBuffers(eglDisplay_, eglSurface_);
+}
+
+void GlRenderer::sampleProbeRegion(float outRgb[3]) const {
+    // detectBuffer_ rows run top-down in screen terms - the same convention
+    // runDetectionPass relies on when it scales bestMinY back up.
+    const int w = DETECT_W / PROBE_DIV;
+    const int h = DETECT_H / PROBE_DIV;
+    double sum[3] = {0.0, 0.0, 0.0};
+    int count = 0;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const uint8_t* px = &detectBuffer_[((size_t)y * DETECT_W + x) * 4];
+            sum[0] += px[0];
+            sum[1] += px[1];
+            sum[2] += px[2];
+            ++count;
+        }
+    }
+    const double n = count > 0 ? (double)count : 1.0;
+    outRgb[0] = (float)(sum[0] / n / 255.0);
+    outRgb[1] = (float)(sum[1] / n / 255.0);
+    outRgb[2] = (float)(sum[2] / n / 255.0);
+}
+
+void GlRenderer::requestCaptureModeProbe() {
+    probeState_ = ProbeState::MarkerOn;
+    probeFrames_ = 0;
+    captureMode_ = -1;
+    ALOGI("Capture-mode probe requested.");
+}
+
+void GlRenderer::runCaptureModeProbe(GLuint externalTexId, int frameWidth, int frameHeight) {
+    // The compositor needs a few frames to carry our marker through the mirror
+    // before the readback can possibly show it.
+    const int SETTLE_FRAMES = 4;
+
+    if (probeState_ == ProbeState::MarkerOn) {
+        drawProbeMarker(true);
+        if (++probeFrames_ < SETTLE_FRAMES) return;
+        if (readReducedFrame(externalTexId, frameWidth, frameHeight)) {
+            sampleProbeRegion(probeSampleOn_);
+        }
+        probeFrames_ = 0;
+        probeState_ = ProbeState::MarkerOff;
+        return;
+    }
+
+    drawProbeMarker(false);
+    if (++probeFrames_ < SETTLE_FRAMES) return;
+    if (readReducedFrame(externalTexId, frameWidth, frameHeight)) {
+        sampleProbeRegion(probeSampleOff_);
+    }
+
+    const float dR = probeSampleOn_[0] - probeSampleOff_[0];
+    const float dG = probeSampleOn_[1] - probeSampleOff_[1];
+    const float dB = probeSampleOn_[2] - probeSampleOff_[2];
+    const float changed = sqrtf(dR * dR + dG * dG + dB * dB);
+
+    const float mR = probeSampleOn_[0] - PROBE_R;
+    const float mG = probeSampleOn_[1] - PROBE_G;
+    const float mB = probeSampleOn_[2] - PROBE_B;
+    const float looksLikeMarker = sqrtf(mR * mR + mG * mG + mB * mB);
+
+    // Both tests have to agree. "Changed" alone would be fooled by a game
+    // animating under the sampled corner; "looks like the marker" alone would
+    // be fooled by a genuinely magenta frame.
+    const bool captured = changed > 0.25f && looksLikeMarker < 0.35f;
+    captureMode_ = captured ? 1 : 0;
+
+    ALOGI("Capture-mode probe: %s (on=%.2f,%.2f,%.2f off=%.2f,%.2f,%.2f "
+          "delta=%.2f markerDist=%.2f)",
+          captured ? "WHOLE SCREEN (we are in the capture)"
+                   : "SINGLE APP (our overlay is not captured)",
+          probeSampleOn_[0], probeSampleOn_[1], probeSampleOn_[2],
+          probeSampleOff_[0], probeSampleOff_[1], probeSampleOff_[2],
+          changed, looksLikeMarker);
+
+    probeState_ = ProbeState::Done;
+}
+
+void GlRenderer::runDetectionPass(GLuint externalTexId, int frameWidth, int frameHeight) {
+    if (!readReducedFrame(externalTexId, frameWidth, frameHeight)) return;
 
     // A plain bounding box of everything non-black is not good enough: handheld
     // launchers park a system HUD strip (FPS/CPU/temps) at the top of the
@@ -1067,6 +1185,13 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
         return false;
     }
 
+    // Runs before everything else, including the pause gate: the answer decides
+    // which geometry the whole session uses, and it needs frames to flow.
+    if (probeState_ == ProbeState::MarkerOn || probeState_ == ProbeState::MarkerOff) {
+        runCaptureModeProbe(externalTexId, frameWidth, frameHeight);
+        return true;
+    }
+
     // Detection must measure the emulator's output, not ours. Blank first, let
     // the compositor push a few of our transparent frames through the capture,
     // then measure.
@@ -1128,6 +1253,7 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     glUniform2f(uni_.nativeRes, (float)consoleNativeWidth_, (float)consoleNativeHeight_);
     // Whatever yHiTex_ was actually allocated at - see ensureAiTextures().
     glUniform1f(uni_.aiScale, (float)(aiScale_ > 0 ? aiScale_ : 1));
+    glUniform1i(uni_.protectSource, protectSource_ ? 1 : 0);
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
     glUniform1f(uni_.lcdGrid, lcdGridIntensity_);

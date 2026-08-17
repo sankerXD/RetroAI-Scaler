@@ -27,7 +27,9 @@ class NativeBridge {
     external fun nativeSetGeometry(
         srcX: Int, srcY: Int, srcW: Int, srcH: Int,
         outX: Int, outY: Int, outW: Int, outH: Int,
-        showSourceGuide: Boolean
+        showSourceGuide: Boolean,
+        /** False under single-app capture: the output may cover the source. */
+        protectSource: Boolean
     )
 
     external fun nativeSetRenderConfig(
@@ -79,6 +81,15 @@ class NativeBridge {
 
     /** statsOut must hold 5 floats: [fps, captureMs, aiMs, renderMs, swapMs] */
     external fun nativeGetPerformanceStats(statsOut: FloatArray): Boolean
+
+    /**
+     * Starts the capture-mode probe. Needs frames to be flowing; the result
+     * shows up a handful of frames later via [nativeGetCaptureMode].
+     */
+    external fun nativeRequestCaptureModeProbe()
+
+    /** -1 still unknown, 0 single-app capture, 1 whole-screen capture. */
+    external fun nativeGetCaptureMode(): Int
 
     external fun nativeRelease()
 }

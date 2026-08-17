@@ -58,7 +58,13 @@ public:
      * The two must not be the same region - the source area is punched out
      * of the output so we never capture our own output (feedback loop).
      */
-    void setGeometry(const RectI& source, const RectI& output, bool showSourceGuide);
+    void setGeometry(const RectI& source, const RectI& output, bool showSourceGuide,
+                     bool protectSource);
+
+    /** Starts the capture-mode probe; result arrives a handful of frames later. */
+    void requestCaptureModeProbe();
+    /** -1 while still unknown, 0 single-app, 1 whole-screen. */
+    int captureModeResult() const { return captureMode_; }
 
     void setRenderConfig(
         bool isAiEnabled,
@@ -158,6 +164,8 @@ private:
     RectI sourceRect_{};
     RectI outputRect_{};
     bool showSourceGuide_{false};
+    /** False under single-app capture: our output is allowed over the source. */
+    bool protectSource_{true};
     bool hasGeometry_{false};
     bool paused_{false};
     bool pausedFrameDrawn_{false};
@@ -165,6 +173,28 @@ private:
     // Source auto-detection
     enum class DetectState { Idle, Blanking, Measuring };
     DetectState detectState_{DetectState::Idle};
+
+    /**
+     * Probe that decides whether our own overlay is inside the capture.
+     *
+     * The consent dialog offers whole-screen and single-app capture, there is
+     * no API to force the latter, and the two need different geometry - so the
+     * service has to know which one the user picked. The captured-content
+     * callbacks looked like the answer but fire identically in both modes.
+     *
+     * So test the property that actually matters instead: paint a marker,
+     * read the capture back, paint nothing, read it back again. If the marker
+     * shows up in the capture we are inside it, which means whole-screen.
+     * Differential rather than absolute, so whatever the emulator happens to
+     * be drawing underneath cannot be mistaken for the marker.
+     */
+    enum class ProbeState { Idle, MarkerOn, MarkerOff, Done };
+    ProbeState probeState_{ProbeState::Idle};
+    int probeFrames_{0};
+    float probeSampleOn_[3]{};
+    float probeSampleOff_[3]{};
+    /** -1 unknown, 0 single-app (we are not captured), 1 whole-screen. */
+    int captureMode_{-1};
     int detectBlankFrames_{0};
     int detectExpectedW_{240};
     int detectExpectedH_{160};
@@ -173,6 +203,14 @@ private:
     bool detectedValid_{false};
     std::vector<uint8_t> detectBuffer_{};
     void runDetectionPass(GLuint externalTexId, int frameWidth, int frameHeight);
+
+    /** Renders the whole captured frame into detectTex_ and reads it back. */
+    bool readReducedFrame(GLuint externalTexId, int frameWidth, int frameHeight);
+    /** Paints the probe marker, or clears if `on` is false. */
+    void drawProbeMarker(bool on);
+    /** Mean RGB of the marker's corner of the last reduced readback. */
+    void sampleProbeRegion(float outRgb[3]) const;
+    void runCaptureModeProbe(GLuint externalTexId, int frameWidth, int frameHeight);
 
     // Render Settings
     bool isAiEnabled_{true};
@@ -235,6 +273,7 @@ private:
         GLint outputRect{-1};
         GLint nativeRes{-1};
         GLint aiScale{-1};
+        GLint protectSource{-1};
         GLint aiEnabled{-1};
         GLint scanline{-1};
         GLint lcdGrid{-1};
