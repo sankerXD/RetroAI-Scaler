@@ -21,6 +21,8 @@ import android.view.Gravity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.WindowManager
+import android.view.View
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.retroai.scaler.MainActivity
@@ -29,6 +31,7 @@ import com.retroai.scaler.capture.CaptureBridge
 import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
+import com.retroai.scaler.ui.CaptureMode
 import com.retroai.scaler.ui.ProfilePreference
 import com.retroai.scaler.jni.NativeBridge
 import com.retroai.scaler.ui.FloatingBallManager
@@ -273,8 +276,8 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             folders,
             profile.console.nativeWidth * profile.sourceScale,
             profile.console.nativeHeight * profile.sourceScale,
-            profile.sourceCorner.biasX,
-            profile.sourceCorner.biasY,
+            profile.effectiveBiasX,
+            profile.effectiveBiasY,
             profile.disableRaShader
         )
         Log.i(TAG, "auto-write on start: ${result.message}")
@@ -316,7 +319,19 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         // Recents can be quicker than the 400 ms foreground poll, so this
         // transition is not even observed in the case that needs it - the
         // window resize flicker is, and that is where the recreate hangs off.
-        if (shouldRender) scheduleAutoDetect()
+        if (shouldRender) {
+            // Coming back to the emulator is taken as the restart we asked for.
+            // Worst case the user only switched away and back, and they see the
+            // same scrambled frame they were already told how to fix.
+            if (awaitingRaRestart) {
+                Log.i(TAG, "target app re-entered - assuming RetroArch restarted")
+                awaitingRaRestart = false
+                floatingBallManager?.profile?.detectedSourceRect = null
+                applyRenderingState()
+            }
+            scheduleAutoDetect()
+            scheduleCaptureModeProbe()
+        }
     }
 
     /**
@@ -335,6 +350,156 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         if (!isRenderingActive || manager.profile.detectedSourceRect != null) return@Runnable
         Log.i(TAG, "auto-detecting capture window")
         manager.detectSourceWindow(silent = true)
+    }
+
+    /**
+     * Measures whether our overlay is inside the capture, once per session.
+     *
+     * RetroArch's config had to be written before RetroArch even started, from
+     * a prediction; this is where that prediction gets checked. Only a
+     * mismatch costs the user anything, and only once - the answer is
+     * remembered, so the next session predicts correctly.
+     */
+    private var captureModeProbeRequested = false
+
+    /**
+     * Set when the measured capture mode contradicts the prediction the
+     * RetroArch config was written from. Suppresses painting until the user has
+     * restarted the emulator, because until then it is drawing to the old
+     * layout and every sample lands somewhere meaningless.
+     */
+    private var awaitingRaRestart = false
+
+    /** On-screen banner shown for the whole of [awaitingRaRestart]. */
+    private var restartNoticeView: View? = null
+
+    /**
+     * Says out loud why the picture went away.
+     *
+     * A blank overlay plus a Toast that lasts a few seconds reads as a crash -
+     * the first reaction to it here was "完蛋，黑屏了". The message has to stay
+     * up for as long as the condition does, so it is obvious this is a state
+     * waiting on the user rather than a failure.
+     *
+     * Only while the emulator is in front: over the launcher it would just be
+     * a banner covering someone else's app.
+     */
+    private fun showRestartNotice(show: Boolean) {
+        if (show == (restartNoticeView != null)) return
+
+        if (!show) {
+            restartNoticeView?.let {
+                if (it.isAttachedToWindow) runCatching { windowManager?.removeView(it) }
+            }
+            restartNoticeView = null
+            return
+        }
+
+        val pad = (resources.displayMetrics.density * 20).toInt()
+        val view = TextView(this).apply {
+            text = "捕获方式已变更\n请关闭 RetroArch，重新载入游戏"
+            setTextColor(0xFFFFFFFF.toInt())
+            setBackgroundColor(0xE6000000.toInt())
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setPadding(pad, pad, pad, pad)
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER }
+
+        runCatching { windowManager?.addView(view, params) }
+            .onSuccess { restartNoticeView = view }
+            .onFailure { Log.w(TAG, "restart notice could not be shown", it) }
+    }
+
+    private fun scheduleCaptureModeProbe() {
+        if (captureModeProbeRequested) return
+        captureModeProbeRequested = true
+        // After the auto-detect window, so the two readback users never overlap.
+        mainHandler.postDelayed({
+            if (!isRenderingActive) {
+                captureModeProbeRequested = false
+                return@postDelayed
+            }
+            Log.i(TAG, "requesting capture-mode probe")
+            nativeBridge.nativeRequestCaptureModeProbe()
+            pollCaptureMode(0)
+        }, 3000L)
+    }
+
+    private fun pollCaptureMode(attempt: Int) {
+        val result = nativeBridge.nativeGetCaptureMode()
+        if (result < 0) {
+            if (attempt > 40) {
+                Log.w(TAG, "capture-mode probe did not settle; keeping the predicted mode")
+                return
+            }
+            mainHandler.postDelayed({ pollCaptureMode(attempt + 1) }, 100L)
+            return
+        }
+
+        val measured = if (result == 1) CaptureMode.WHOLE_SCREEN else CaptureMode.SINGLE_APP
+        Log.i(TAG, "CAPTURE MODE = $measured")
+        ProfilePreference.setCaptureMode(this, measured)
+
+        val manager = floatingBallManager ?: return
+        if (manager.profile.captureMode == measured) return
+
+        Log.i(TAG, "capture mode differs from the prediction - re-applying geometry and config")
+        // Stay blank until RetroArch has been restarted. It is still drawing
+        // where the OLD mode asked it to, so anything painted now is sampled
+        // from the wrong place - a scrambled picture on top of a working game.
+        // The rewritten config only takes effect when content is next loaded.
+        awaitingRaRestart = true
+        manager.applyCaptureMode(measured)
+        applyRenderingState()
+        // The measured window belongs to the old layout, and RetroArch is about
+        // to be told to draw somewhere else entirely.
+        pushGeometry()
+        rewriteRetroArchConfigForCaptureMode()
+    }
+
+    /**
+     * The capture window moves between the corner and the centre with the mode,
+     * so RetroArch has to be told again - and it only reads its overrides at
+     * content load, hence the prompt.
+     */
+    private fun rewriteRetroArchConfigForCaptureMode() {
+        Thread {
+            try {
+                val profile = floatingBallManager?.profile ?: return@Thread
+                val manager = RetroArchConfigManager(this)
+                val folders = manager.coreFoldersFor(profile.console)
+                if (folders.isEmpty()) return@Thread
+                val result = manager.applyViewport(
+                    folders,
+                    profile.console.nativeWidth * profile.sourceScale,
+                    profile.console.nativeHeight * profile.sourceScale,
+                    profile.effectiveBiasX,
+                    profile.effectiveBiasY,
+                    profile.disableRaShader
+                )
+                Log.i(TAG, "capture-mode config rewrite: ${result.message}")
+                if (result.ok) {
+                    mainHandler.post {
+                        Toast.makeText(
+                            this,
+                            "捕获方式与预期不同，已重新配置\n请重启 RetroArch 后重新载入游戏",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "capture-mode config rewrite failed", e)
+            }
+        }.apply { name = "CaptureModeConfig"; isDaemon = true }.start()
     }
 
     /** Pushes [isRenderingActive] down to the renderer and the capture pipeline. */
@@ -357,7 +522,8 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * So: stop the frames, take the context back, and only then wipe.
      */
     private fun applyRenderingState() {
-        if (isRenderingActive) {
+        showRestartNotice(isRenderingActive && awaitingRaRestart)
+        if (isRenderingActive && !awaitingRaRestart) {
             setOverlayObscuring(true)
             nativeBridge.nativeSetRenderPaused(false)
             captureBridge?.resumeCapture()
@@ -470,6 +636,25 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     private fun setOverlayObscuring(obscuring: Boolean) {
         val params = overlayParams ?: return
         val view = surfaceView ?: return
+        // FLAG_NOT_TOUCHABLE comes off while painting, and that is what buys
+        // full opacity: the system clamps a NOT_TOUCHABLE overlay to 0.8 so
+        // touches can pass, and the missing 20% let the small native picture
+        // ghost through the enhanced one wherever the two overlap.
+        //
+        // Nothing is lost by dropping it. At 0.8 this device already withholds
+        // touches from other apps, so while the game is up they were never
+        // getting through anyway - and it is a handheld with physical controls.
+        // The flag and the low alpha both come back the moment we stop
+        // painting, which is when reaching the launcher actually matters.
+        val base = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        params.flags = if (obscuring) {
+            base
+        } else {
+            base or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+
         val wanted = if (obscuring) 1.0f else PASSTHROUGH_ALPHA
         // Always re-applied, never short-circuited on the cached value: this
         // controls whether the enhanced picture is visible at all, and a local
@@ -480,7 +665,10 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         if (view.isAttachedToWindow) {
             try {
                 windowManager?.updateViewLayout(view, params)
-                Log.i(TAG, "Overlay alpha -> $wanted (obscuring=$obscuring)")
+                val notTouchable =
+                    params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
+                Log.i(TAG, "Overlay alpha -> $wanted notTouchable=$notTouchable " +
+                        "(obscuring=$obscuring)")
             } catch (e: Exception) {
                 Log.w(TAG, "overlay alpha update failed", e)
             }
@@ -513,7 +701,8 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         nativeBridge.nativeSetGeometry(
             src.left, src.top, src.width(), src.height(),
             out.left, out.top, out.width(), out.height(),
-            profile.showSourceGuide
+            profile.showSourceGuide,
+            profile.captureMode == CaptureMode.WHOLE_SCREEN
         )
     }
 
@@ -527,7 +716,18 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             screenHeight,
             screenDensityDpi,
             nativeBridge,
-            onProjectionStopped = { mainHandler.post { stopSelf() } }
+            onProjectionStopped = {
+                // Restore RIGHT HERE, not just from onDestroy. Quitting the
+                // emulator ends the projection, and a mediaProjection
+                // foreground service that outlives its projection gets killed
+                // by the system - onDestroy never runs, and RetroArch is left
+                // with our viewport override, drawing into a corner of its own
+                // window with nothing else on screen. Under single-app capture
+                // that is not an edge case: it happens every time the user
+                // finishes playing.
+                restoreConfigOnStop()
+                mainHandler.post { stopSelf() }
+            }
         )
         if (!bridge.startCapture()) {
             Toast.makeText(this, "录屏捕获启动失败，已停止 AI 增强", Toast.LENGTH_LONG).show()
@@ -786,7 +986,14 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * gone. Runs on its own thread so a manual stop cannot interrupt it midway,
      * and each file is replaced atomically (temp + rename).
      */
+    /**
+     * Guards against the restore running twice: it is now kicked off the moment
+     * the projection ends as well as from onDestroy, and those can overlap.
+     */
+    private val configRestoreStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private fun restoreConfigOnStop() {
+        if (!configRestoreStarted.compareAndSet(false, true)) return
         val appContext = applicationContext
         Thread {
             try {
@@ -809,6 +1016,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         mainHandler.removeCallbacks(foregroundPollRunnable)
         mainHandler.removeCallbacks(autoDetectRunnable)
         mainHandler.removeCallbacks(surfaceSettleRunnable)
+        showRestartNotice(false)
 
         // Order matters: stop producing frames, then wipe the overlay, then
         // tear down GL, then finally detach the window.

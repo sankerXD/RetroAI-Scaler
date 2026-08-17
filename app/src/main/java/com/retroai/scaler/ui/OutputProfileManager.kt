@@ -2,6 +2,7 @@ package com.retroai.scaler.ui
 
 import android.content.Context
 import android.graphics.Rect
+import android.os.Build
 
 /**
  * Console presets. Native resolutions are what the emulator core actually
@@ -26,11 +27,26 @@ enum class ConsoleType(
 }
 
 /**
+ * Whether our own overlay ends up inside the capture.
+ *
+ * This is the single fact the whole geometry hangs off. Whole-screen capture
+ * mirrors the display including everything we draw, so the source and the
+ * output have to be kept apart. Single-app capture only mirrors the emulator's
+ * window, so our output can sit right on top of the capture window - which is
+ * what finally gets the small native picture out of the user's sight.
+ *
+ * Measured at runtime by the marker probe rather than assumed: the consent
+ * dialog offers both and there is no API to force either one.
+ */
+enum class CaptureMode { WHOLE_SCREEN, SINGLE_APP }
+
+/**
  * Which screen corner hosts RetroArch's small native capture window.
  *
- * The capture source and the enhanced output MUST NOT overlap: MediaProjection
- * mirrors the whole display including our own overlay, so painting on top of
- * the area we sample from would feed our output straight back into the capture.
+ * Only meaningful for [CaptureMode.WHOLE_SCREEN]. The capture source and the
+ * enhanced output MUST NOT overlap there: MediaProjection mirrors the whole
+ * display including our own overlay, so painting on top of the area we sample
+ * from would feed our output straight back into the capture.
  */
 enum class SourceCorner(val displayName: String) {
     TOP_LEFT("左上"),
@@ -125,8 +141,27 @@ data class RenderProfile(
      * over the computed corner: RetroArch's placement depends on its video
      * driver and on the repack's own overrides, so measuring beats predicting.
      */
-    var detectedSourceRect: Rect? = null
+    var detectedSourceRect: Rect? = null,
+
+    /**
+     * Decides whether the capture window has to be kept clear of the output.
+     * Measured by the probe; predicted from the last session until it lands.
+     */
+    var captureMode: CaptureMode = CaptureMode.WHOLE_SCREEN
 ) {
+    /**
+     * Where RetroArch is told to put its viewport, normalised 0..1.
+     *
+     * 0.5 under single-app capture: the picture ends up underneath our output
+     * anyway, and the middle is unambiguous whichever origin the video driver
+     * uses - which is the one thing the corner placements can never be sure of.
+     */
+    val effectiveBiasX: Float
+        get() = if (captureMode == CaptureMode.SINGLE_APP) 0.5f else sourceCorner.biasX
+
+    val effectiveBiasY: Float
+        get() = if (captureMode == CaptureMode.SINGLE_APP) 0.5f else sourceCorner.biasY
+
     /** Screen-space rect the overlay samples from. */
     fun getSourceRect(screenWidth: Int, screenHeight: Int): Rect {
         detectedSourceRect?.let { return it }
@@ -137,6 +172,17 @@ data class RenderProfile(
     fun getPlannedSourceRect(screenWidth: Int, screenHeight: Int): Rect {
         val w = console.nativeWidth * sourceScale
         val h = console.nativeHeight * sourceScale
+
+        // Single-app capture: centred, because the output is going to be laid
+        // straight over it. Centring also removes the one ambiguity in
+        // RetroArch's bias keys - whether bias_y=0 means top or bottom depends
+        // on the video driver, but the middle is the middle either way.
+        if (captureMode == CaptureMode.SINGLE_APP) {
+            val left = ((screenWidth - w) / 2).coerceAtLeast(0)
+            val top = ((screenHeight - h) / 2).coerceAtLeast(0)
+            return Rect(left, top, left + w, top + h)
+        }
+
         val m = sourceMarginPx
         val left = when (sourceCorner) {
             SourceCorner.TOP_LEFT, SourceCorner.BOTTOM_LEFT -> m
@@ -163,6 +209,32 @@ data class RenderProfile(
     fun getOutputRect(screenWidth: Int, screenHeight: Int): Rect {
         val src = getSourceRect(screenWidth, screenHeight)
         val gap = 8
+
+        // Single-app capture: our overlay is not in the mirror, so the output
+        // takes the whole screen and sits right on top of the capture window.
+        //
+        // Centred on the SCREEN, not on the capture window. RetroArch centres
+        // its viewport inside its own window, which the system bars make
+        // shorter than the display - following that centre put the picture
+        // ~28px high and left visibly uneven top and bottom borders. The
+        // capture window is tiny by comparison, so screen-centring still
+        // swallows it whole; the nudge below only ever matters for a source
+        // large enough to poke out, and keeps coverage guaranteed.
+        if (captureMode == CaptureMode.SINGLE_APP) {
+            val k = minOf(
+                screenWidth / console.nativeWidth,
+                screenHeight / console.nativeHeight
+            ).coerceAtLeast(1)
+            val w = console.nativeWidth * k
+            val h = console.nativeHeight * k
+            var left = (screenWidth - w) / 2
+            var top = (screenHeight - h) / 2
+            if (src.width() <= w) left = left.coerceIn(src.right - w, src.left)
+            if (src.height() <= h) top = top.coerceIn(src.bottom - h, src.top)
+            left = left.coerceIn(0, (screenWidth - w).coerceAtLeast(0))
+            top = top.coerceIn(0, (screenHeight - h).coerceAtLeast(0))
+            return Rect(left, top, left + w, top + h)
+        }
 
         val bands = if (avoidSourceOverlap) {
             listOf(
@@ -231,8 +303,8 @@ data class RenderProfile(
             appendLine("video_scale_integer = \"true\"")
             appendLine("custom_viewport_width = \"${console.nativeWidth * sourceScale}\"")
             appendLine("custom_viewport_height = \"${console.nativeHeight * sourceScale}\"")
-            appendLine("video_viewport_bias_x = \"%.1f\"".format(sourceCorner.biasX))
-            appendLine("video_viewport_bias_y = \"%.1f\"".format(sourceCorner.biasY))
+            appendLine("video_viewport_bias_x = \"%.1f\"".format(effectiveBiasX))
+            appendLine("video_viewport_bias_y = \"%.1f\"".format(effectiveBiasY))
             append("input_overlay_enable = \"false\"")
         }
     }
@@ -245,6 +317,44 @@ data class RenderProfile(
 object ProfilePreference {
     private const val PREFS = "retro_ai_profile"
     private const val KEY_CONSOLE = "console"
+
+    /**
+     * Global, not per-console: it describes how the user grants capture, not
+     * anything about the game.
+     *
+     * Persisted because RetroArch's config has to be written BEFORE RetroArch
+     * starts, while the mode can only be measured once frames are flowing -
+     * so the first write of a session is always a prediction. Last session's
+     * answer is a far better one than a fixed default, and users do not
+     * normally alternate. When the probe disagrees, the service rewrites the
+     * config and says to restart RetroArch.
+     */
+    private const val KEY_CAPTURE_MODE = "captureMode"
+
+    /**
+     * Single-app capture only exists from API 34, so anything older can only
+     * ever be whole-screen. On 34+ the dialog still lets the user pick either,
+     * so this is a guess - just the best available one before the probe lands.
+     */
+    private val defaultCaptureMode: CaptureMode
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            CaptureMode.SINGLE_APP
+        } else {
+            CaptureMode.WHOLE_SCREEN
+        }
+
+    fun lastCaptureMode(context: Context): CaptureMode {
+        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return runCatching {
+            CaptureMode.valueOf(p.getString(KEY_CAPTURE_MODE, defaultCaptureMode.name)!!)
+        }.getOrDefault(defaultCaptureMode)
+    }
+
+    fun setCaptureMode(context: Context, mode: CaptureMode) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_CAPTURE_MODE, mode.name)
+            .apply()
+    }
 
     /**
      * Everything except the console is stored PER CONSOLE: a GBA and a PS1 want
@@ -289,7 +399,8 @@ object ProfilePreference {
             sourceScale = p.getInt(key(console, "sourceScale"), 1),
             showSourceGuide = p.getBoolean(key(console, "guide"), false),
             disableRaShader = p.getBoolean(key(console, "disableShader"), true),
-            avoidSourceOverlap = p.getBoolean(key(console, "avoidOverlap"), true)
+            avoidSourceOverlap = p.getBoolean(key(console, "avoidOverlap"), true),
+            captureMode = lastCaptureMode(context)
         )
     }
 

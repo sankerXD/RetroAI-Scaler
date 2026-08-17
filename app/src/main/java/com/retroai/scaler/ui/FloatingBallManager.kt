@@ -126,6 +126,19 @@ class FloatingBallManager(
      * that no longer exists. The service re-runs detection once the game is
      * back on screen.
      */
+    /**
+     * Switches the layout between "keep the output clear of the capture window"
+     * and "lay the output straight over it", once the probe has established
+     * which one applies. Drops the measured rect: the capture window is about
+     * to move between the corner and the centre.
+     */
+    fun applyCaptureMode(mode: CaptureMode) {
+        if (profile.captureMode == mode) return
+        profile.captureMode = mode
+        profile.detectedSourceRect = null
+        applyRenderProfile()
+    }
+
     fun onScreenSizeChanged(newWidth: Int, newHeight: Int) {
         if (newWidth == screenWidth && newHeight == screenHeight) return
         screenWidth = newWidth
