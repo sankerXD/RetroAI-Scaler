@@ -347,6 +347,8 @@ private:
         GLint lightDir{-1};
         GLint relief{-1};
         GLint occlusion{-1};
+        GLint hazeCap{-1};
+        GLint hazeKnee{-1};
         GLint shadeRadius{-1};
         GLint depthBaseTex{-1};
         GLint shadeStrength{-1};

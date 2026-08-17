@@ -48,6 +48,8 @@ uniform int uHd2d;          // 1 = light the picture with that depth
 uniform vec2 uLightDir;
 uniform float uRelief;
 uniform float uOcclusion;
+uniform float uHazeCap;
+uniform float uHazeKnee;
 uniform float uShadeRadius;
 uniform sampler2D uDepthBaseTex; // the network's low-frequency bias
 uniform float uShadeStrength;
@@ -219,6 +221,15 @@ float depthWide(vec2 uv, float lod) {
  * edge are contradictory demands on a mip level, so the average is computed on
  * the CPU with edge clamping and uploaded whole.
  */
+/**
+ * Smooth minimum: identical to min(a, b) away from the knee, continuous in its
+ * SLOPE across it. min() is not, and that is enough to draw a line.
+ */
+float softMin(float a, float b, float k) {
+    float h = max(k - abs(a - b), 0.0) / k;
+    return min(a, b) - h * h * k * 0.25;
+}
+
 float depthDetail(vec2 uv, float lod) {
     return depthWide(uv, lod) - texture(uDepthBaseTex, uv).r;
 }
@@ -248,7 +259,18 @@ vec3 applyShading(vec2 uv, vec3 colour, vec2 texelSize) {
     // Distance haze, not contact shadow: far parts of the scene sit a little
     // deeper. It is the one thing a depth map from a flat image can say with
     // confidence, and unlike a discontinuity term it outlines nothing.
-    float far = 1.0 - clamp((1.0 - dC) * uOcclusion, 0.0, 0.22);
+    //
+    // The cap is applied with a SMOOTH minimum, and that is not cosmetic. With
+    // a hard clamp, 58% of all pixels sat pinned exactly at the cap: the haze
+    // was a flat constant across the whole upper frame, carrying no depth at
+    // all, and then switched on abruptly where the depth crossed the cap. The
+    // slope went from ~0 to 0.0025 per row in one step. Because the network's
+    // vertical bias puts that crossing at the same height in every game, the
+    // result was a horizontal edge across the bottom of the picture that no
+    // amount of work on the lambert term could remove - it was never in the
+    // lambert term. Rendering the field on its own shows it immediately: a
+    // uniform slab with a straight line under it.
+    float far = 1.0 - softMin((1.0 - dC) * uOcclusion, uHazeCap, uHazeKnee);
 
     // Interface panels are 2D overlays sitting on top of the scene, not
     // geometry, so they are handed through with the light they were drawn with.
@@ -635,6 +657,8 @@ void GlRenderer::initGLResources() {
         uni_.lightDir    = glGetUniformLocation(oesPassProgram_, "uLightDir");
         uni_.relief      = glGetUniformLocation(oesPassProgram_, "uRelief");
         uni_.occlusion   = glGetUniformLocation(oesPassProgram_, "uOcclusion");
+        uni_.hazeCap     = glGetUniformLocation(oesPassProgram_, "uHazeCap");
+        uni_.hazeKnee    = glGetUniformLocation(oesPassProgram_, "uHazeKnee");
         uni_.shadeRadius = glGetUniformLocation(oesPassProgram_, "uShadeRadius");
         uni_.depthBaseTex = glGetUniformLocation(oesPassProgram_, "uDepthBaseTex");
         uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
@@ -1661,7 +1685,17 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // lit from - and the one the eye reads as "outdoors, sun".
     glUniform2f(uni_.lightDir, -0.55f, -0.80f);
     glUniform1f(uni_.relief, 6.0f);
-    glUniform1f(uni_.occlusion, 0.55f);
+    // Haze depth and level. Raised together with the cap so the picture keeps
+    // the overall brightness that was settled on: the CPU high-pass removed a
+    // systematic darkening the old lambert had been contributing by accident,
+    // which lifted the whole picture by about 6% and read as washed out. The
+    // level is now something these three numbers state on purpose - measured
+    // mean multiplier 0.826 - rather than a leftover of an artefact.
+    glUniform1f(uni_.occlusion, 0.70f);
+    glUniform1f(uni_.hazeCap, 0.30f);
+    // Knee width. Wide enough that the cap is approached over most of the
+    // haze's range instead of being hit at one depth value.
+    glUniform1f(uni_.hazeKnee, 0.20f);
     // Native pixels between taps, and deliberately large. At 10 a whole glyph
     // and most sprites fall inside one tap spacing and average away, leaving
     // only the shape of the scene - which is the only thing this depth can
