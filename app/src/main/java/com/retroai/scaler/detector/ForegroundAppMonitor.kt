@@ -76,8 +76,22 @@ class ForegroundAppMonitor(private val context: Context) {
             val event = UsageEvents.Event()
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
-                if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                    lastKnownPackage = event.packageName
+                when (event.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> lastKnownPackage = event.packageName
+
+                    // Recents, the notification shade and the power menu are
+                    // system UI: they never emit ACTIVITY_RESUMED for a new
+                    // package, so tracking resumes alone leaves the emulator
+                    // looking like it is still in front. The overlay then keeps
+                    // painting a full-screen picture of a game that has stopped
+                    // producing frames - a frozen image covering everything,
+                    // which reads to the user as the device having hung.
+                    //
+                    // The target pausing is the signal that we are no longer in
+                    // the game, whatever took its place.
+                    UsageEvents.Event.ACTIVITY_PAUSED -> {
+                        if (event.packageName == lastKnownPackage) lastKnownPackage = null
+                    }
                 }
             }
         } catch (e: Exception) {

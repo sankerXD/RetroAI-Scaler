@@ -25,12 +25,19 @@ import java.util.concurrent.TimeUnit
  */
 class CaptureBridge(
     private val mediaProjection: MediaProjection,
-    private val screenWidth: Int,
-    private val screenHeight: Int,
-    private val screenDensityDpi: Int,
+    screenWidth: Int,
+    screenHeight: Int,
+    screenDensityDpi: Int,
     private val nativeBridge: NativeBridge,
     private val onProjectionStopped: () -> Unit
 ) {
+    // Mutable because the display can rotate under us: a portrait-native panel
+    // swaps 1920x1080 <-> 1080x1920 and both the mirror and the reader have to
+    // follow, or the capture keeps arriving letterboxed at the old aspect.
+    private var screenWidth = screenWidth
+    private var screenHeight = screenHeight
+    private var screenDensityDpi = screenDensityDpi
+
     companion object {
         private const val TAG = "CaptureBridge"
         private const val VIRTUAL_DISPLAY_NAME = "RetroAI_Capture_Display"
@@ -83,24 +90,38 @@ class CaptureBridge(
         // callback createVirtualDisplay() throws IllegalStateException.
         mediaProjection.registerCallback(projectionCallback, captureHandler)
 
-        // Use basic ImageReader WITHOUT custom HardwareBuffer usage flags.
-        // On MediaTek SoCs, custom GPU usage flags cause format mismatch:
-        //   Producer outputs 0x22 (IMPLEMENTATION_DEFINED)
-        //   but ImageReader expects 0x1 (RGBA_8888)
-        imageReader = ImageReader.newInstance(
+        imageReader = createImageReader()
+
+        return if (createVirtualDisplay()) {
+            isCapturing = true
+            Log.i(TAG, "Capture pipeline started: ${screenWidth}x${screenHeight} @ ${screenDensityDpi}dpi")
+            true
+        } else {
+            stopCapture()
+            false
+        }
+    }
+
+    /**
+     * Use basic ImageReader WITHOUT custom HardwareBuffer usage flags.
+     * On MediaTek SoCs, custom GPU usage flags cause format mismatch:
+     *   Producer outputs 0x22 (IMPLEMENTATION_DEFINED)
+     *   but ImageReader expects 0x1 (RGBA_8888)
+     */
+    private fun createImageReader(): ImageReader {
+        val reader = ImageReader.newInstance(
             screenWidth,
             screenHeight,
             PixelFormat.RGBA_8888,
             2  // double-buffering for low latency
         )
-
         var frameCounter = 0
         var errorCounter = 0
-        imageReader?.setOnImageAvailableListener({ reader ->
+        reader.setOnImageAvailableListener({ r ->
             if (!isCapturing) return@setOnImageAvailableListener
             var image: android.media.Image? = null
             try {
-                image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
                 val hardwareBuffer = image.hardwareBuffer
                 if (hardwareBuffer != null) {
                     try {
@@ -123,13 +144,56 @@ class CaptureBridge(
                 image?.close()
             }
         }, captureHandler)
+        return reader
+    }
 
-        return if (createVirtualDisplay()) {
-            isCapturing = true
-            Log.i(TAG, "Capture pipeline started: ${screenWidth}x${screenHeight} @ ${screenDensityDpi}dpi")
+    /**
+     * Follows a display rotation without touching the projection itself.
+     *
+     * The VirtualDisplay is resized in place rather than released and rebuilt:
+     * a MediaProjection's consent is tied to the session, and re-running
+     * createVirtualDisplay() on an existing projection is not something to rely
+     * on across Android versions. resize() has been public since API 21 and
+     * keeps the same mirror alive.
+     *
+     * The ImageReader cannot be resized, so a new one is built at the new size
+     * and swapped in; the old one is closed only after the display points at
+     * the replacement, so no frame is delivered into a closed reader.
+     */
+    fun resizeTo(newWidth: Int, newHeight: Int, newDensityDpi: Int): Boolean {
+        if (!isCapturing) return false
+        if (newWidth == screenWidth && newHeight == screenHeight) return true
+
+        return try {
+            screenWidth = newWidth
+            screenHeight = newHeight
+            screenDensityDpi = newDensityDpi
+
+            val oldReader = imageReader
+            val newReader = createImageReader()
+            imageReader = newReader
+
+            virtualDisplay?.resize(newWidth, newHeight, newDensityDpi)
+            // While paused the display deliberately holds no surface; leave it
+            // that way so resumeCapture() is still the one thing that starts
+            // frames flowing again.
+            if (!isPaused) {
+                virtualDisplay?.surface = newReader.surface
+            }
+
+            oldReader?.setOnImageAvailableListener(null, null)
+            oldReader?.close()
+
+            // The watchdog judges liveness from these, and the pipeline just
+            // restarted - it must not read the gap as a dead pipeline.
+            startedAtMs = SystemClock.elapsedRealtime()
+            lastFrameAtMs = startedAtMs
+            renderedFrames = 0L
+
+            Log.i(TAG, "Capture resized to ${newWidth}x${newHeight} @ ${newDensityDpi}dpi")
             true
-        } else {
-            stopCapture()
+        } catch (e: Exception) {
+            Log.e(TAG, "resizeTo failed", e)
             false
         }
     }
@@ -196,6 +260,46 @@ class CaptureBridge(
         }
     }
 
+    /**
+     * Hands the EGL context back from the capture thread.
+     *
+     * The context is current on that thread, and EGL only lets one thread hold
+     * it. It therefore has to be unbound FROM that thread - doing the teardown
+     * (or a rebuild) from the main thread while it is still bound here fails
+     * with EGL_BAD_ACCESS, and the last rendered frame stays on screen.
+     *
+     * Blocking, because every caller's next step is to touch the renderer.
+     */
+    fun detachEglContext() {
+        runOnCaptureThread { nativeBridge.nativeDetachEglContext() }
+    }
+
+    /**
+     * Runs [block] on the capture thread and waits for it.
+     *
+     * Anything that touches GL belongs here rather than on the caller's thread.
+     * The EGL context lives on the capture thread and stays current between
+     * frames, so driving GL from elsewhere means migrating the context back and
+     * forth - which is both racy and, in practice, a way to end up drawing
+     * successfully into something that no longer reaches the screen.
+     *
+     * Returns false when there is no capture thread to run on, so callers can
+     * fall back to doing it inline.
+     */
+    fun runOnCaptureThread(block: () -> Unit): Boolean {
+        val handler = captureHandler ?: return false
+        val latch = CountDownLatch(1)
+        val posted = handler.post {
+            try {
+                block()
+            } finally {
+                latch.countDown()
+            }
+        }
+        if (!posted) return false
+        return latch.await(500, TimeUnit.MILLISECONDS)
+    }
+
     fun stopCapture() {
         isCapturing = false
 
@@ -212,23 +316,7 @@ class CaptureBridge(
             Log.w(TAG, "unregisterCallback failed", e)
         }
 
-        // The EGL context is current on the capture thread. It has to be
-        // unbound FROM that thread, otherwise teardown on the main thread
-        // hits EGL_BAD_ACCESS and the last rendered frame stays on screen.
-        val handler = captureHandler
-        if (handler != null) {
-            val latch = CountDownLatch(1)
-            val posted = handler.post {
-                try {
-                    nativeBridge.nativeDetachEglContext()
-                } finally {
-                    latch.countDown()
-                }
-            }
-            if (posted) {
-                latch.await(500, TimeUnit.MILLISECONDS)
-            }
-        }
+        detachEglContext()
 
         captureThread?.quitSafely()
         captureThread = null

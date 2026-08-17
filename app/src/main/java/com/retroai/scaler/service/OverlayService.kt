@@ -64,6 +64,29 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         /** A long stall means something died; a paused game is fine below this. */
         private const val FRAME_STALL_TIMEOUT_MS = 10_000L
 
+        /**
+         * How long the overlay surface has to hold a size before it counts as a
+         * real display change. Long enough to swallow the inset flicker that
+         * Recents produces, short enough that a rotation still feels immediate.
+         */
+        private const val SURFACE_SETTLE_MS = 350L
+
+        /**
+         * Window alpha used while the overlay is not painting, chosen to sit
+         * under the obscuring limit that makes Android withhold touches from
+         * other apps (default 0.8) without ever reaching zero.
+         *
+         * Zero is what it used to be, and zero is the problem: a fully
+         * transparent window stops being composited, and bringing the alpha
+         * back afterwards did not reconnect the SurfaceView's layer. The
+         * renderer then drew and swapped perfectly happily - success=1,
+         * paused=0, valid geometry - into a surface that no longer reached the
+         * screen. Nothing is lost by staying at 0.5: the paused overlay has
+         * already drawn a fully transparent frame, so its contents are
+         * invisible at any alpha.
+         */
+        private const val PASSTHROUGH_ALPHA = 0.5f
+
         const val EXTRA_PROJECTION_DATA = "extra_projection_data"
         const val EXTRA_PROJECTION_RESULT_CODE = "extra_projection_result_code"
         const val ACTION_OPEN_MENU = "com.retroai.scaler.ACTION_OPEN_MENU"
@@ -80,6 +103,17 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
     private var windowManager: WindowManager? = null
     private var surfaceView: SurfaceView? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
+
+    /** Latest size reported by surfaceChanged, acted on once it stops moving. */
+    private var pendingSurfaceWidth = 0
+    private var pendingSurfaceHeight = 0
+
+    /**
+     * True while the overlay window is being torn down and put straight back on
+     * purpose, so surfaceDestroyed knows to keep the capture pipeline alive.
+     */
+    private var isRecreatingOverlay = false
     private var floatingBallManager: FloatingBallManager? = null
     private var captureBridge: CaptureBridge? = null
     private var mediaProjection: MediaProjection? = null
@@ -277,6 +311,11 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         // The capture window has to be measured while the game is actually on
         // screen. Doing it automatically here is what removes the "every time I
         // start it the picture is misaligned until I press detect" step.
+        //
+        // Note there is deliberately no surface recreate here. Returning from
+        // Recents can be quicker than the 400 ms foreground poll, so this
+        // transition is not even observed in the case that needs it - the
+        // window resize flicker is, and that is where the recreate hangs off.
         if (shouldRender) scheduleAutoDetect()
     }
 
@@ -299,12 +338,48 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     }
 
     /** Pushes [isRenderingActive] down to the renderer and the capture pipeline. */
+    /**
+     * Order matters, and getting it wrong leaves the overlay frozen on screen.
+     *
+     * clearOverlay() has to make the EGL context current on THIS thread to draw
+     * its transparent frame, but the capture thread holds that context - it
+     * acquires it per frame and never hands it back. Wiping before the frames
+     * stop therefore means ensureEglContextCurrent() fails, the wipe silently
+     * does nothing, and pausing immediately afterwards freezes the last
+     * enhanced frame over everything. That is what made opening Recents look
+     * like the device had hung: touches passed through fine, but a stale
+     * picture of the game covered the screen.
+     *
+     * It survived on a 60 Hz handheld because the gaps between frames were
+     * wide enough for the main thread to win the context often enough. At
+     * 120 Hz it essentially never wins.
+     *
+     * So: stop the frames, take the context back, and only then wipe.
+     */
     private fun applyRenderingState() {
-        nativeBridge.nativeSetRenderPaused(!isRenderingActive)
         if (isRenderingActive) {
+            setOverlayObscuring(true)
+            nativeBridge.nativeSetRenderPaused(false)
             captureBridge?.resumeCapture()
         } else {
             captureBridge?.pauseCapture()
+            // The wipe runs ON the capture thread, where the EGL context
+            // already is. Doing it from here instead means handing the context
+            // across threads and back on every app switch, and after that
+            // round trip the renderer kept reporting healthy frames that never
+            // reached the screen.
+            val bridge = captureBridge
+            val wiped = bridge?.runOnCaptureThread {
+                nativeBridge.nativeSetRenderPaused(true)
+            } ?: false
+            if (!wiped) {
+                // No capture thread to borrow (not started yet, or gone) - the
+                // context cannot be current anywhere else, so this is safe.
+                nativeBridge.nativeSetRenderPaused(true)
+            }
+            // After the wipe, so the window is already blank before it stops
+            // obscuring and hands touches back to whatever is behind.
+            setOverlayObscuring(false)
         }
     }
 
@@ -355,6 +430,12 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
+            // Starts non-obscuring. The service usually comes up while the user
+            // is still looking at our own Activity rather than the game, and an
+            // overlay that blocks other apps' touches before it has painted
+            // anything is never the right default. applyRenderingState() raises
+            // it once the target app is actually on screen.
+            alpha = PASSTHROUGH_ALPHA
         }
 
         // NOTE: no setZOrderOnTop(true) and no setSecure(true) here - see the
@@ -365,7 +446,47 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             holder.addCallback(this@OverlayService)
         }
 
+        overlayParams = params
         windowManager?.addView(surfaceView, params)
+    }
+
+    /**
+     * Drops the overlay's opacity to zero while it is not painting, which is
+     * what lets other apps receive touches again.
+     *
+     * Android blocks a touch that passes through a window belonging to another
+     * UID once that window's opacity goes over the obscuring limit, and the
+     * system already pins this one at 0.8 for that reason. On this handheld
+     * touches to anything outside our own UID were being swallowed anyway - the
+     * launcher and Recents were visible but completely dead, while our own
+     * floating menu kept working, which is the exact signature of a cross-UID
+     * obscuring block.
+     *
+     * Zero opacity means the window obscures nothing, so it stops counting.
+     * The window is deliberately left attached rather than removed: taking the
+     * SurfaceView out destroys the surface, which tears down the renderer and
+     * reloads the ESPCN weights on every single app switch.
+     */
+    private fun setOverlayObscuring(obscuring: Boolean) {
+        val params = overlayParams ?: return
+        val view = surfaceView ?: return
+        val wanted = if (obscuring) 1.0f else PASSTHROUGH_ALPHA
+        // Always re-applied, never short-circuited on the cached value: this
+        // controls whether the enhanced picture is visible at all, and a local
+        // field that has drifted out of step with the real window would make
+        // the overlay silently invisible while the whole pipeline reports
+        // healthy.
+        params.alpha = wanted
+        if (view.isAttachedToWindow) {
+            try {
+                windowManager?.updateViewLayout(view, params)
+                Log.i(TAG, "Overlay alpha -> $wanted (obscuring=$obscuring)")
+            } catch (e: Exception) {
+                Log.w(TAG, "overlay alpha update failed", e)
+            }
+        } else {
+            Log.w(TAG, "Overlay alpha -> $wanted skipped: view not attached")
+        }
     }
 
     private fun setupFloatingBall() {
@@ -422,6 +543,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         Log.i(TAG, "Surface created: ${screenWidth}x${screenHeight}")
+        isRecreatingOverlay = false
         val success = nativeBridge.nativeInit(holder.surface, screenWidth, screenHeight)
         if (!success) {
             Log.e(TAG, "nativeInit failed - tearing down so nothing covers the screen.")
@@ -438,17 +560,163 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         startCapturePipeline()
     }
 
+    /**
+     * Rebuilds the whole pipeline when the display rotates.
+     *
+     * Everything downstream is sized once, in screen pixels: the renderer's
+     * viewport, the ImageReader, the VirtualDisplay, and the source/output
+     * rects. On a handheld whose panel is portrait-native (1080x1920 driven at
+     * 1920x1080) a rotation swaps every one of those, and the previous code
+     * latched them in onCreate() and never looked again - the enhanced picture
+     * kept being drawn at the old landscape coordinates over a portrait
+     * surface, and never recovered without restarting the service.
+     *
+     * The surface's own size is the trigger rather than onConfigurationChanged:
+     * it is the number the renderer actually draws against, so it cannot
+     * disagree with what we hand to nativeInit.
+     */
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        // Overlay is fullscreen and orientation-locked to the display metrics
-        // captured in onCreate; nothing to do here.
+        if (!isSurfaceReady) {
+            Log.i(TAG, "surfaceChanged ${width}x${height} ignored: surface not ready")
+            return
+        }
+        // Debounced, because not every resize is a rotation. Opening Recents
+        // momentarily reshapes the overlay to the inset-reduced height and
+        // straight back (1920x1080 -> 1920x1024 -> 1920x1080), which the
+        // previous immediate handling turned into two full teardowns of EGL,
+        // the renderer and the ncnn model inside 300 ms - on every single app
+        // switch. Waiting for the size to settle collapses that transient to
+        // no net change, while a real rotation settles on the new size and
+        // rebuilds exactly once.
+        pendingSurfaceWidth = width
+        pendingSurfaceHeight = height
+        mainHandler.removeCallbacks(surfaceSettleRunnable)
+        mainHandler.postDelayed(surfaceSettleRunnable, SURFACE_SETTLE_MS)
+    }
+
+    private val surfaceSettleRunnable = Runnable { applySettledSurfaceSize() }
+
+    private fun applySettledSurfaceSize() {
+        val width = pendingSurfaceWidth
+        val height = pendingSurfaceHeight
+        if (width <= 0 || height <= 0) return
+        if (!isSurfaceReady || (width == screenWidth && height == screenHeight)) {
+            Log.i(TAG, "surfaceChanged settled at ${width}x${height} (no rebuild)")
+            return
+        }
+        val holder = surfaceView?.holder ?: return
+        if (!holder.surface.isValid) {
+            Log.w(TAG, "surfaceChanged settled but surface is not valid - skipping rebuild")
+            return
+        }
+        Log.i(TAG, "Display changed: ${screenWidth}x${screenHeight} -> ${width}x${height}, rebuilding pipeline.")
+
+        // Suspend delivery first: frames sized for the old screen must not
+        // reach a renderer that is being rebuilt for the new one.
+        val bridge = captureBridge
+        bridge?.pauseCapture()
+
+        // nativeRelease() while the EGL context is still current on the capture
+        // thread is the EGL_BAD_ACCESS trap from the class notes, so hand the
+        // renderer back from that thread before touching it.
+        bridge?.detachEglContext()
+        nativeBridge.nativeRelease()
+        isSurfaceReady = false
+
+        screenWidth = width
+        screenHeight = height
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager?.defaultDisplay?.getRealMetrics(metrics)
+        screenDensityDpi = metrics.densityDpi
+
+        // Drops the measured capture window - it is in the old orientation's
+        // pixels - and pulls the ball back inside the new bounds.
+        floatingBallManager?.onScreenSizeChanged(width, height)
+
+        if (!nativeBridge.nativeInit(holder.surface, width, height)) {
+            Log.e(TAG, "nativeInit failed after rotation - tearing down so nothing covers the screen.")
+            Toast.makeText(this, "旋转后渲染引擎重建失败，已停止 AI 增强", Toast.LENGTH_LONG).show()
+            stopSelf()
+            return
+        }
+        isSurfaceReady = true
+
+        // The renderer is a new object: the ESPCN weights and every render
+        // setting live in it and have to be pushed again.
+        floatingBallManager?.pushAllSettings()
+        pushGeometry()
+
+        if (bridge != null && !bridge.resizeTo(width, height, screenDensityDpi)) {
+            Log.e(TAG, "capture resize failed after rotation - stopping.")
+            Toast.makeText(this, "旋转后录屏重建失败，已停止 AI 增强", Toast.LENGTH_LONG).show()
+            stopSelf()
+            return
+        }
+        applyRenderingState()
+
+        // The capture window has to be re-measured against the new screen, and
+        // RetroArch needs a moment to finish its own re-layout first.
+        if (isRenderingActive) scheduleAutoDetect()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        Log.i(TAG, "Surface destroyed.")
+        Log.i(TAG, "Surface destroyed. (intentional recreate=$isRecreatingOverlay)")
+        // A rebuild queued against a surface that no longer exists must not run.
+        mainHandler.removeCallbacks(surfaceSettleRunnable)
         isSurfaceReady = false
+
+        if (isRecreatingOverlay) {
+            // Only the GL side goes. Stopping the capture here would release
+            // the VirtualDisplay, and rebuilding it means a second
+            // createVirtualDisplay() on the same MediaProjection - which is
+            // exactly what the resize path was written to avoid.
+            captureBridge?.pauseCapture()
+            captureBridge?.detachEglContext()
+            nativeBridge.nativeRelease()
+            return
+        }
+
         captureBridge?.stopCapture()
         captureBridge = null
         nativeBridge.nativeRelease()
+    }
+
+    /**
+     * Throws the overlay window away and immediately adds it back, to get a
+     * fresh surface.
+     *
+     * KNOWN LIMITATION, kept because it is the only lever we have: returning to
+     * the emulator by tapping its own card in Recents orphans the SurfaceView's
+     * buffer queue. SurfaceFlinger's frame counter freezes while every call on
+     * this side keeps succeeding - success=1, paused=0, valid geometry, no
+     * picture - and surfaceDestroyed is never delivered, so nothing notices.
+     *
+     * Nothing currently calls this. Two triggers were tried and both failed:
+     * the foreground transition is often not observed at all (returning from
+     * Recents beats the 400 ms poll), and the window-resize flicker that the
+     * transition produces only happens some of the time. Without a dependable
+     * signal an unconditional rebuild on every app switch was the only option
+     * left, and that costs a renderer re-init plus a model reload each time.
+     *
+     * Leaving via any other app rebuilds the window naturally, which is why
+     * that path always works and is the current workaround.
+     */
+    @Suppress("unused")
+    private fun recreateOverlaySurface() {
+        val view = surfaceView ?: return
+        val params = overlayParams ?: return
+        if (isRecreatingOverlay) return
+
+        isRecreatingOverlay = true
+        try {
+            if (view.isAttachedToWindow) windowManager?.removeView(view)
+            windowManager?.addView(view, params)
+            Log.i(TAG, "Overlay window recreated to get a fresh surface.")
+        } catch (e: Exception) {
+            Log.e(TAG, "overlay recreate failed", e)
+            isRecreatingOverlay = false
+        }
     }
 
     private fun createNotificationChannel() {
@@ -540,6 +808,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         mainHandler.removeCallbacks(watchdogRunnable)
         mainHandler.removeCallbacks(foregroundPollRunnable)
         mainHandler.removeCallbacks(autoDetectRunnable)
+        mainHandler.removeCallbacks(surfaceSettleRunnable)
 
         // Order matters: stop producing frames, then wipe the overlay, then
         // tear down GL, then finally detach the window.
