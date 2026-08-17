@@ -10,6 +10,7 @@
 #include <vector>
 #include "../capture/frame_cropper.h"
 #include "../ai/espcn_inference.h"
+#include "ui_panels.h"
 
 namespace retroai {
 
@@ -306,6 +307,19 @@ private:
     float aiLastMs_{0.0f};
     std::vector<uint8_t> aiInput_{};
     std::vector<uint8_t> aiOutput_{};
+    /**
+     * Interface-panel mask for the frame the worker just processed, produced
+     * alongside the depth from the same input buffer. Detection runs on the
+     * worker rather than the render thread: it is CPU work on a native-res
+     * frame, and the render thread holds the pipeline lock across a whole GPU
+     * frame (see AGENT.md 10.3a).
+     */
+    std::vector<uint8_t> aiUiMask_{};
+    bool aiWantUiMask_{false};
+    UiPanelFinder uiPanels_{};
+    GLuint uiMaskTex_{0};
+    /** No mask yet means no lighting yet - see the uHd2d gate. */
+    bool hasUiMask_{false};
 
     // Cached uniform locations (glGetUniformLocation per frame is wasteful)
     struct {
@@ -324,7 +338,7 @@ private:
         GLint occlusion{-1};
         GLint shadeRadius{-1};
         GLint shadeStrength{-1};
-        GLint uiNear{-1};
+        GLint uiMaskTex{-1};
         GLint aiEnabled{-1};
         GLint scanline{-1};
         GLint lcdGrid{-1};

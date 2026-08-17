@@ -49,7 +49,7 @@ uniform float uRelief;
 uniform float uOcclusion;
 uniform float uShadeRadius;
 uniform float uShadeStrength;
-uniform float uUiNear;      // blurred depth above this is an overlay, not scene
+uniform sampler2D uUiMaskTex; // 1 over interface panels, which stay unlit
 uniform int uAiEnabled;
 uniform float uScanlineIntensity;
 uniform float uMaskStrength;
@@ -214,17 +214,17 @@ vec3 applyShading(vec2 uv, vec3 colour, vec2 texelSize) {
     // confidence, and unlike a discontinuity term it outlines nothing.
     float far = 1.0 - clamp((1.0 - dC) * uOcclusion, 0.0, 0.22);
 
-    // Interface panels and titles are 2D overlays, not geometry, and lighting
-    // them is always wrong - a dialogue box picked up shading, and big lettering
-    // grew shadows that fell across the box behind it.
+    // Interface panels are 2D overlays sitting on top of the scene, not
+    // geometry, so they are handed through with the light they were drawn with.
     //
-    // The depth model identifies them for us: it puts an overlay right at the
-    // near extreme, and nothing in a real scene sits there - anything genuinely
-    // that close to the camera still has relief across it. Reading this from
-    // the BLURRED depth is what makes it work now; the earlier attempt tested
-    // the raw depth for "near and flat", and a glyph edge is near and by
-    // definition not flat, so it never fired where it was needed.
-    float ui = smoothstep(uUiNear, uUiNear + 0.10, dC);
+    // This does NOT come from the depth any more. Two attempts did and both
+    // failed, and measuring the depth against the real corpus says why: it is
+    // dominated by a vertical near/far ramp, so a panel's depth reports where
+    // on the screen it sits and nothing about what it is - a speech bubble
+    // halfway up the frame reads mid-depth, exactly like the scene behind it.
+    // There is no cut-off in that signal that separates them. The mask now
+    // comes from the panel's border in the picture itself; see ui_panels.h.
+    float ui = texture(uUiMaskTex, uv).r;
 
     return colour * mix(1.0, mix(lambert * far, 1.0, ui), uShadeStrength);
 }
@@ -601,7 +601,7 @@ void GlRenderer::initGLResources() {
         uni_.occlusion   = glGetUniformLocation(oesPassProgram_, "uOcclusion");
         uni_.shadeRadius = glGetUniformLocation(oesPassProgram_, "uShadeRadius");
         uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
-        uni_.uiNear      = glGetUniformLocation(oesPassProgram_, "uUiNear");
+        uni_.uiMaskTex   = glGetUniformLocation(oesPassProgram_, "uUiMaskTex");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
         uni_.scanline    = glGetUniformLocation(oesPassProgram_, "uScanlineIntensity");
         uni_.lcdGrid     = glGetUniformLocation(oesPassProgram_, "uMaskStrength");
@@ -725,6 +725,7 @@ void GlRenderer::aiWorkerLoop() {
 
     std::vector<uint8_t> localIn;
     std::vector<uint8_t> localOut;
+    std::vector<uint8_t> localUiMask;
 
     std::unique_lock<std::mutex> lock(aiMutex_);
     while (true) {
@@ -735,6 +736,7 @@ void GlRenderer::aiWorkerLoop() {
         const int w = aiJobWidth_;
         const int h = aiJobHeight_;
         const int scale = aiScale_;
+        const bool wantUiMask = aiWantUiMask_;
         aiJobPending_ = false;
         aiBusy_ = true;
         lock.unlock();
@@ -744,10 +746,17 @@ void GlRenderer::aiWorkerLoop() {
         bool ok = espcnEngine_.process(
             localIn.data(), w, h, localOut.data(), w * scale, h * scale, ms);
 
+        // Same input frame, same thread, delivered as one pair with the depth,
+        // so the light and the panels it must skip always describe one frame.
+        if (ok && wantUiMask) {
+            uiPanels_.detect(localIn.data(), w, h, localUiMask);
+        }
+
         lock.lock();
         aiBusy_ = false;
         if (ok) {
             aiOutput_.swap(localOut);
+            if (wantUiMask) aiUiMask_.swap(localUiMask);
             aiResultReady_ = true;
             aiLastMs_ = ms;
         } else {
@@ -831,6 +840,22 @@ bool GlRenderer::ensureAiTextures() {
     if (yHiIsDepth_) glGenerateMipmap(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    // Interface-panel mask, native resolution, one channel. Linear so the
+    // feathered boundary stays a gradient rather than a staircase - the point
+    // of the mask is to stop the pass drawing outlines, so it must not draw one
+    // of its own.
+    if (uiMaskTex_ == 0) glGenTextures(1, &uiMaskTex_);
+    glBindTexture(GL_TEXTURE_2D, uiMaskTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    // Geometry changed, so any remembered panels are in the old coordinates.
+    uiPanels_.reset();
+    hasUiMask_ = false;
+
     glBindFramebuffer(GL_FRAMEBUFFER, aiFbo_);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, baseTex_[0], 0);
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -909,6 +934,14 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             // chain for a picture texture is per-frame work nothing samples.
             if (yHiIsDepth_) glGenerateMipmap(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, 0);
+
+            if (yHiIsDepth_ && aiUiMask_.size() == (size_t)w * h) {
+                glBindTexture(GL_TEXTURE_2D, uiMaskTex_);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h,
+                                GL_RED, GL_UNSIGNED_BYTE, aiUiMask_.data());
+                glBindTexture(GL_TEXTURE_2D, 0);
+                hasUiMask_ = true;
+            }
         } else if (aiResultReady_) {
             // Stale result from a different geometry - drop it.
             aiResultReady_ = false;
@@ -974,6 +1007,7 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             }
             aiJobWidth_ = w;
             aiJobHeight_ = h;
+            aiWantUiMask_ = yHiIsDepth_ && hd2dEnabled_;
             aiJobPending_ = true;
         }
         aiCv_.notify_one();
@@ -1549,7 +1583,11 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     const bool depthLoaded = espcnEngine_.outChannels() == 1 && aiScale_ == 1
                              && espcnEngine_.inChannels() == 3;
     glUniform1i(uni_.showDepth, (depthLoaded && !hd2dEnabled_) ? 1 : 0);
-    glUniform1i(uni_.hd2d, (depthLoaded && hd2dEnabled_ && depthReady) ? 1 : 0);
+    // The panel mask is a hard requirement, not a refinement: without it the
+    // pass lights dialogue boxes and portraits, which is the one artefact it
+    // was never acceptable to ship. Waiting a frame for it costs nothing.
+    glUniform1i(uni_.hd2d,
+                (depthLoaded && hd2dEnabled_ && depthReady && hasUiMask_) ? 1 : 0);
     // Light from the upper left, the direction HD-2D games are almost always
     // lit from - and the one the eye reads as "outdoors, sun".
     glUniform2f(uni_.lightDir, -0.55f, -0.80f);
@@ -1562,10 +1600,6 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // Mip level, not a pixel radius, since the taps come from the mip chain.
     glUniform1f(uni_.shadeRadius, 3.0f);
     glUniform1f(uni_.shadeStrength, hd2dStrength_);
-    // Where the overlay cut-off sits in the normalised depth. 0.74 keeps
-    // characters lit - they are mid-depth - while dropping the panels and
-    // titles the model pins to the very front.
-    glUniform1f(uni_.uiNear, 0.74f);
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
     glUniform1f(uni_.lcdGrid, lcdGridIntensity_);
@@ -1586,6 +1620,10 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, baseTex_[aiDisplayIndex_]);
     glUniform1i(uni_.baseTex, 2);
+
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, uiMaskTex_);
+    glUniform1i(uni_.uiMaskTex, 3);
     glActiveTexture(GL_TEXTURE0);
 
     glBindVertexArray(quadVao_);
@@ -1662,6 +1700,11 @@ void GlRenderer::release() {
             yHiTex_ = 0;
             yHiIsDepth_ = false;
         }
+        if (uiMaskTex_ != 0) {
+            glDeleteTextures(1, &uiMaskTex_);
+            uiMaskTex_ = 0;
+            hasUiMask_ = false;
+        }
         if (detectTex_ != 0) {
             glDeleteTextures(1, &detectTex_);
             detectTex_ = 0;
@@ -1673,6 +1716,8 @@ void GlRenderer::release() {
     detectBuffer_.clear();
     aiInput_.clear();
     aiOutput_.clear();
+    aiUiMask_.clear();
+    uiPanels_.reset();
     aiTexWidth_ = 0;
     aiTexHeight_ = 0;
     hasAiPair_ = false;

@@ -29,6 +29,7 @@ set(SOURCE_FILES
     capture/frame_cropper.cpp
     ai/espcn_inference.cpp
     render/gl_renderer.cpp
+    render/ui_panels.cpp
 )
 
 add_library(
