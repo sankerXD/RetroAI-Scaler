@@ -25,6 +25,8 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 import com.retroai.scaler.R
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.jni.NativeBridge
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Manages the Floating Ball, Auto-Hide / Touch-Wake Edge Tab, and Expanded Menu.
@@ -42,6 +44,30 @@ class FloatingBallManager(
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * ncnn model loading runs here, never on the main thread.
+     *
+     * nativeLoadEspcnModel() takes the pipeline mutex and, on the very first
+     * call, brings up the whole Vulkan stack inside ncnn (instance, device,
+     * pipeline cache). unloadEspcn() is no cheaper: it joins the inference
+     * thread, which for Ultra means waiting out a 50 ms+ forward pass. Doing
+     * either on the main thread while the capture thread holds that same mutex
+     * every frame is what produced the "menu opens, app stops responding" ANR.
+     *
+     * Single-threaded on purpose: loads must apply in the order they were
+     * requested, and two ncnn::Net constructions must not overlap.
+     */
+    private val engineExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "EspcnLoader").apply { isDaemon = true }
+    }
+
+    /**
+     * Bumped on every engine/scale change. A load that finishes after the user
+     * has already picked something else must not report its result, or a slow
+     * Ultra load would toast-and-fall-back over the newer selection.
+     */
+    private val engineGeneration = AtomicInteger(0)
 
     var profile: RenderProfile = ProfilePreference.load(context)
         private set
@@ -88,6 +114,37 @@ class FloatingBallManager(
         inflateViews()
         showFloatingBall()
         resetAutoHideTimer()
+    }
+
+    /**
+     * Re-seats everything that was measured against the old screen after the
+     * display rotates.
+     *
+     * The measured capture window is dropped rather than transformed: it is a
+     * rect in the previous orientation's pixels, and RetroArch re-lays out its
+     * own viewport on rotation anyway, so the old numbers describe a window
+     * that no longer exists. The service re-runs detection once the game is
+     * back on screen.
+     */
+    fun onScreenSizeChanged(newWidth: Int, newHeight: Int) {
+        if (newWidth == screenWidth && newHeight == screenHeight) return
+        screenWidth = newWidth
+        screenHeight = newHeight
+        profile.detectedSourceRect = null
+
+        // The ball is placed in absolute screen pixels, so after a portrait
+        // <-> landscape swap it can sit past the new edge, out of reach.
+        val ballSize = dp(BALL_SIZE_PX)
+        ballParams.x = ballParams.x.coerceIn(0, (screenWidth - ballSize).coerceAtLeast(0))
+        ballParams.y = ballParams.y.coerceIn(0, (screenHeight - ballSize).coerceAtLeast(0))
+        if (floatingBallView?.isAttachedToWindow == true) {
+            windowManager.updateViewLayout(floatingBallView, ballParams)
+        }
+        if (edgeTabView?.isAttachedToWindow == true) {
+            edgeTabParams.x = if (isDockedOnRight) screenWidth - edgeTabParams.width else 0
+            edgeTabParams.y = ballParams.y
+            windowManager.updateViewLayout(edgeTabView, edgeTabParams)
+        }
     }
 
     /**
@@ -343,6 +400,22 @@ class FloatingBallManager(
                 applyRenderProfile()
             }
 
+        root.findViewById<Button>(R.id.btnToggleGuide).apply {
+            updateGuideButtonText(this)
+            setOnClickListener {
+                profile.showSourceGuide = !profile.showSourceGuide
+                updateGuideButtonText(this)
+                applyRenderProfile()
+                // The numbers behind the ring, so a misaligned capture window
+                // can be read off directly instead of through logcat.
+                Toast.makeText(
+                    context,
+                    profile.getSummaryText(screenWidth, screenHeight),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
         root.findViewById<Button>(R.id.btnDetectSource).setOnClickListener { detectSourceWindow() }
         root.findViewById<Button>(R.id.btnDetectSource).setOnLongClickListener {
             clearDetectedWindow(); true
@@ -406,32 +479,76 @@ class FloatingBallManager(
      * the shader's edge-reconstruction path on or off.
      */
     private fun applyEngine() {
+        // Cheap uniform writes stay here: they take the pipeline mutex for a
+        // fraction of a frame, not for a Vulkan bring-up.
         nativeBridge.nativeSetPixelEdge(profile.engine.isPixelEdge)
         nativeBridge.nativeSetMaskType(profile.maskType.id)
+
+        // Snapshot what the user picked. The worker must not read `profile`,
+        // which keeps changing on the main thread.
         val baseName = profile.modelAssetBaseName()
-        if (baseName == null) {
-            nativeBridge.nativeUnloadEspcnModel()
-            return
-        }
-        try {
-            val param = context.assets.open("models/$baseName.param").use {
-                it.readBytes().toString(Charsets.UTF_8)
+        val scaleFactor = profile.aiScale.factor
+        val engineName = profile.engine.displayName
+        val generation = engineGeneration.incrementAndGet()
+
+        engineExecutor.execute {
+            if (baseName == null) {
+                nativeBridge.nativeUnloadEspcnModel()
+                return@execute
             }
-            val bin = context.assets.open("models/$baseName.bin").use { it.readBytes() }
-            // Ask for the GPU for every network; ncnn falls back to CPU when
-            // there is no Vulkan device.
-            if (!nativeBridge.nativeLoadEspcnModel(param, bin, profile.aiScale.factor, true)) {
-                Toast.makeText(context, "${profile.engine.displayName} 加载失败，已回退", Toast.LENGTH_LONG).show()
+            val failure: String? = try {
+                val param = context.assets.open("models/$baseName.param").use {
+                    it.readBytes().toString(Charsets.UTF_8)
+                }
+                val bin = context.assets.open("models/$baseName.bin").use { it.readBytes() }
+                // Ask for the GPU for every network; ncnn falls back to CPU when
+                // there is no Vulkan device.
+                if (nativeBridge.nativeLoadEspcnModel(param, bin, scaleFactor, true)) {
+                    null
+                } else {
+                    "$engineName 加载失败，已回退"
+                }
+            } catch (e: Exception) {
+                "模型文件缺失，已回退到像素边缘重建"
+            }
+
+            // A newer selection already superseded this one - stay quiet and
+            // leave whatever that newer load installed alone.
+            if (failure == null || generation != engineGeneration.get()) return@execute
+
+            nativeBridge.nativeUnloadEspcnModel()
+            mainHandler.post {
+                if (generation != engineGeneration.get()) return@post
+                Toast.makeText(context, failure, Toast.LENGTH_LONG).show()
                 profile.engine = UpscaleEngine.PIXEL_EDGE
                 nativeBridge.nativeSetPixelEdge(true)
-                nativeBridge.nativeUnloadEspcnModel()
+                syncEngineChipToProfile()
             }
-        } catch (e: Exception) {
-            Toast.makeText(context, "模型文件缺失，已回退到像素边缘重建", Toast.LENGTH_LONG).show()
-            profile.engine = UpscaleEngine.PIXEL_EDGE
-            nativeBridge.nativeSetPixelEdge(true)
-            nativeBridge.nativeUnloadEspcnModel()
         }
+    }
+
+    /**
+     * Moves the engine chip back onto whatever is actually loaded. Only needed
+     * on the fallback path: the load now finishes long after the tap, so
+     * without this the chip would keep advertising an ESPCN variant that was
+     * dropped. Re-checking re-enters the listener once, which lands on
+     * PIXEL_EDGE and unloads - idempotent, and it terminates immediately.
+     */
+    private fun updateGuideButtonText(button: Button) {
+        button.text = if (profile.showSourceGuide) "隐藏取景框" else "显示取景框"
+    }
+
+    private fun syncEngineChipToProfile() {
+        val group = menuView?.findViewById<ChipGroup>(R.id.chipGroupEngine) ?: return
+        group.check(
+            when (profile.engine) {
+                UpscaleEngine.PIXEL_EDGE -> R.id.chipEnginePixelEdge
+                UpscaleEngine.SHADER -> R.id.chipEngineShader
+                UpscaleEngine.ESPCN_FAST -> R.id.chipEngineEspcnFast
+                UpscaleEngine.ESPCN_HQ -> R.id.chipEngineEspcnHq
+                UpscaleEngine.ESPCN_ULTRA -> R.id.chipEngineEspcnUltra
+            }
+        )
     }
 
     /** Reflects the (per-console) saved settings back into the controls. */
@@ -733,16 +850,31 @@ class FloatingBallManager(
     }
 
     private fun updateHudStats() {
-        val stats = FloatArray(5)
+        val stats = FloatArray(6)
         if (!nativeBridge.nativeGetPerformanceStats(stats)) return
 
         val (fps, captureMs, aiMs, renderMs) = stats.toList()
         val swapMs = stats[4]
         floatingBallView?.findViewById<TextView>(R.id.tvBallFps)?.text = "%.0f".format(fps)
+        // Which backend ncnn actually landed on. Asking for the GPU does not
+        // guarantee getting it - with no Vulkan device it silently falls back
+        // to CPU, and a cost that looks alarming on the GPU is simply expected
+        // on two big cores. Showing it here beats grepping logcat at load time.
+        val backend = when (stats[5].toInt()) {
+            1 -> "GPU/Vulkan"
+            0 -> "CPU/NEON"
+            else -> null
+        }
         // AI runs on its own thread and the swap blocks on vsync, so neither
         // belongs in the frame's work cost - reporting them together would
         // make a vsync-limited pipeline look compute-bound.
-        val aiText = if (aiMs > 0.01f) "AI 推理 %.1f ms（异步）".format(aiMs) else "AI 推理 未启用"
+        val aiText = if (aiMs > 0.01f && backend != null) {
+            "AI 推理 %.1f ms（异步 · %s）".format(aiMs, backend)
+        } else if (aiMs > 0.01f) {
+            "AI 推理 %.1f ms（异步）".format(aiMs)
+        } else {
+            "AI 推理 未启用"
+        }
         menuView?.findViewById<TextView>(R.id.tvPerformanceHud)?.text =
             ("帧率 %.1f FPS\n" +
                     "GPU 耗时 %.1f ms（采样 %.1f + 渲染 %.1f）· 垂直同步 %.1f ms\n" +
@@ -751,6 +883,10 @@ class FloatingBallManager(
     }
 
     fun release() {
+        // Let an in-flight load finish rather than killing the thread mid
+        // ncnn::Net construction; the service's own teardown already waits on
+        // the pipeline before the renderer goes away.
+        engineExecutor.shutdown()
         mainHandler.removeCallbacksAndMessages(null)
         floatingBallView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
         edgeTabView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
