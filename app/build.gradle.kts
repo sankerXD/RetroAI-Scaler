@@ -100,3 +100,16 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 }
+
+// A shader that fails to compile does not crash - the renderer degrades to a
+// fully transparent overlay, which is the safety design working as intended.
+// The cost is that a broken shader presents as "the enhanced picture vanished"
+// with one line in logcat as the only evidence. Catch it here instead.
+val checkShaders = tasks.register<Exec>("checkShaders") {
+    group = "verification"
+    description = "Compiles the GLSL embedded in the C++ sources."
+    commandLine("python3", "${rootProject.projectDir}/tools/check_shaders.py")
+}
+
+tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
+    .configureEach { dependsOn(checkShaders) }

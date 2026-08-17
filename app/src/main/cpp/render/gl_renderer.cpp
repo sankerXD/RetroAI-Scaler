@@ -222,6 +222,18 @@ float depthDetail(vec2 uv, float lod) {
     return depthWide(uv, lod) - texture(uDepthBaseTex, uv).r;
 }
 
+/**
+ * Smooth minimum: identical to min(a, b) away from the knee, continuous in its
+ * SLOPE across it. min() is not, and that alone is enough to draw a line - see
+ * the haze cap in applyShading().
+ *
+ * GLSL has no forward declarations, so this must stay above its caller.
+ */
+float softMin(float a, float b, float k) {
+    float h = max(k - abs(a - b), 0.0) / k;
+    return min(a, b) - h * h * k * 0.25;
+}
+
 vec3 applyShading(vec2 uv, vec3 colour, vec2 texelSize) {
     // LOD 3 is roughly an 8x8 native-pixel average - wide enough that a whole
     // glyph and most of a sprite disappear into it, leaving only the shape of

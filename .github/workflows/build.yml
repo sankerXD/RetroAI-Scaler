@@ -59,6 +59,11 @@ jobs:
           cp -r "/tmp/ncnn/${NAME}"/* app/src/main/cpp/libs/ncnn/
           test -f app/src/main/cpp/libs/ncnn/arm64-v8a/include/ncnn/net.h
 
+      - name: Check shaders compile
+        run: python3 tools/check_shaders.py
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
