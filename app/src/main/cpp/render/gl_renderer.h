@@ -351,6 +351,7 @@ private:
         GLint hazeKnee{-1};
         GLint shadeRadius{-1};
         GLint depthBaseTex{-1};
+        GLint depthBias{-1};
         GLint shadeStrength{-1};
         GLint uiMaskTex{-1};
         GLint aiEnabled{-1};

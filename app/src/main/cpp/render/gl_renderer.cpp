@@ -51,7 +51,8 @@ uniform float uOcclusion;
 uniform float uHazeCap;
 uniform float uHazeKnee;
 uniform float uShadeRadius;
-uniform sampler2D uDepthBaseTex; // the network's low-frequency bias
+uniform sampler2D uDepthBaseTex; // the network's per-row bias
+uniform float uDepthBias;        // how much of it to subtract; 0 = off
 uniform float uShadeStrength;
 uniform sampler2D uUiMaskTex; // 1 over interface panels, which stay unlit
 uniform int uAiEnabled;
@@ -219,7 +220,7 @@ float depthWide(vec2 uv, float lod) {
  * haze's job, and it reads the absolute depth.
  */
 float depthDetail(vec2 uv, float lod) {
-    return depthWide(uv, lod) - texture(uDepthBaseTex, uv).r;
+    return depthWide(uv, lod) - uDepthBias * texture(uDepthBaseTex, uv).r;
 }
 
 /**
@@ -661,6 +662,7 @@ void GlRenderer::initGLResources() {
         uni_.hazeKnee    = glGetUniformLocation(oesPassProgram_, "uHazeKnee");
         uni_.shadeRadius = glGetUniformLocation(oesPassProgram_, "uShadeRadius");
         uni_.depthBaseTex = glGetUniformLocation(oesPassProgram_, "uDepthBaseTex");
+        uni_.depthBias   = glGetUniformLocation(oesPassProgram_, "uDepthBias");
         uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
         uni_.uiMaskTex   = glGetUniformLocation(oesPassProgram_, "uUiMaskTex");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
@@ -1686,24 +1688,12 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // Light from the upper left, the direction HD-2D games are almost always
     // lit from - and the one the eye reads as "outdoors, sun".
     glUniform2f(uni_.lightDir, -0.55f, -0.80f);
-    // 8.5, not the 6.0 this sat at before the row-mean high-pass. Removing
-    // each row's average takes the vertical relief hardest - a horizontal
-    // feature is exactly what it deletes - and the light is 80% vertical, so
-    // the loss showed far more than the 13% drop in overall variation
-    // suggested. Measured, 8.5 puts the lighting back to 99% of what it was
-    // while the banding stays 2.4x better on mean row-slope and 3.9x better at
-    // the 99th percentile. Amplifying after the subtraction is strictly better
-    // than subtracting less: taking only 85% of the row mean reaches the same
-    // strength but triples the p99 slope, because it leaves part of the band.
-    glUniform1f(uni_.relief, 8.5f);
-    // Haze depth and level. Raised together with the cap so the picture keeps
-    // the overall brightness that was settled on: the CPU high-pass removed a
-    // systematic darkening the old lambert had been contributing by accident,
-    // which lifted the whole picture by about 6% and read as washed out. The
-    // level is now something these three numbers state on purpose - measured
-    // mean multiplier 0.826 - rather than a leftover of an artefact.
-    glUniform1f(uni_.occlusion, 0.70f);
-    glUniform1f(uni_.hazeCap, 0.30f);
+    glUniform1f(uni_.relief, 6.0f);
+    // The values of the build that was judged right on the device. The only
+    // change from it is that the cap is approached smoothly - that fixed a
+    // real crease and costs 0.7% of brightness, which is not visible.
+    glUniform1f(uni_.occlusion, 0.55f);
+    glUniform1f(uni_.hazeCap, 0.22f);
     // Knee width. Wide enough that the cap is approached over most of the
     // haze's range instead of being hit at one depth value.
     glUniform1f(uni_.hazeKnee, 0.20f);
@@ -1713,6 +1703,18 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // describe honestly.
     // Mip level, not a pixel radius, since the taps come from the mip chain.
     glUniform1f(uni_.shadeRadius, 3.0f);
+    // OFF. Subtracting the per-row bias does kill the band, but it deletes
+    // every horizontally extended feature to do it, and the light is 80%
+    // vertical - what survives is vertical structure, amplified to compensate.
+    // The overall variation is unchanged, which is why the numbers said this
+    // was fine and the screen said it was streaky and ugly. Magnitude was the
+    // wrong thing to measure.
+    //
+    // The bias is a training artefact (the net reports a top-to-bottom ramp
+    // for a flat grey image), so it is being removed at the source instead -
+    // see AGENT.md 13.5 and the model repo's filter_ui_frames.py / --vflip.
+    // Set this to 1.0 to bring the compensation back if that does not land.
+    glUniform1f(uni_.depthBias, 0.0f);
     glUniform1f(uni_.shadeStrength, hd2dStrength_);
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
