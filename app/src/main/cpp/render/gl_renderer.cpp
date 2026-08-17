@@ -39,6 +39,7 @@ uniform vec2 uCaptureSize;
 uniform vec4 uSourceRect;  // x, y, w, h
 uniform vec4 uOutputRect;  // x, y, w, h
 uniform vec2 uNativeRes;   // console native resolution, e.g. 240x160
+uniform float uAiScale;    // ESPCN reconstruction factor: uYHiTex is uNativeRes * this
 uniform int uAiEnabled;
 uniform float uScanlineIntensity;
 uniform float uMaskStrength;
@@ -180,10 +181,14 @@ void main() {
         // (the eye is far less sensitive to chroma resolution).
         vec3 base = texture(uBaseTex, sharpUV(uv, uNativeRes)).rgb;
         float yLo = getLuma(base);
-        // The network output has its own 3x pixel grid. Sampling it with plain
-        // bilinear smears that grid across the output and drags the whole
-        // picture back to mush - snap to it the same way as the base.
-        float yHi = texture(uYHiTex, sharpUV(uv, uNativeRes * 3.0)).r;
+        // The network output has its own pixel grid, native * uAiScale.
+        // Sampling it with plain bilinear smears that grid across the output
+        // and drags the whole picture back to mush - snap to it the same way
+        // as the base. The factor MUST track the selected AI scale: this was
+        // hard-coded to 3.0 while the UI offered 1x/2x/3x/4x, so every scale
+        // except 3x snapped to a grid the texture did not have and threw away
+        // exactly the detail the network had just reconstructed.
+        float yHi = texture(uYHiTex, sharpUV(uv, uNativeRes * uAiScale)).r;
         resultColor = clamp(base + (yHi - yLo), 0.0, 1.0);
     } else if (uAiEnabled != 0) {
         // Edge-directed adaptive upscale over native game pixels.
@@ -474,6 +479,7 @@ void GlRenderer::initGLResources() {
         uni_.sourceRect  = glGetUniformLocation(oesPassProgram_, "uSourceRect");
         uni_.outputRect  = glGetUniformLocation(oesPassProgram_, "uOutputRect");
         uni_.nativeRes   = glGetUniformLocation(oesPassProgram_, "uNativeRes");
+        uni_.aiScale     = glGetUniformLocation(oesPassProgram_, "uAiScale");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
         uni_.scanline    = glGetUniformLocation(oesPassProgram_, "uScanlineIntensity");
         uni_.lcdGrid     = glGetUniformLocation(oesPassProgram_, "uMaskStrength");
@@ -873,10 +879,25 @@ void GlRenderer::runDetectionPass(GLuint externalTexId, int frameWidth, int fram
     // our own floating ball, the launcher's FPS strip, stray HUD bits.
     const float MAX_MISMATCH = 0.35f;
 
+    // Size alone is too weak a test. The summed width+height error lets shapes
+    // through whose PROPORTIONS are nothing like the console's, and those are
+    // exactly the false positives that hurt: RetroArch sitting at its menu
+    // fills the screen (1920x1080 reads as "8x of 240x160, 16% off"), and after
+    // a rotation it re-lays out to something squashed (243x136 reads as "1x,
+    // 16% off"). Both were accepted and became the sampled rect.
+    //
+    // Aspect ratio separates them cleanly because it is scale-free: a genuine
+    // capture window is within ~1% of the console's ratio no matter which
+    // integer multiple it is drawn at, while both false positives above are
+    // ~19% out.
+    const float MAX_ASPECT_ERROR = 0.08f;
+    const float nativeAspect = nativeW / std::max(nativeH, 1e-5f);
+
     std::vector<int> stack;
     stack.reserve(pixelCount / 4);
     int bestArea = 0;
     float bestMismatch = 0.0f;
+    int bestK = 1;
     bool found = false;
     int bestMinX = 0, bestMinY = 0, bestMaxX = 0, bestMaxY = 0;
 
@@ -918,13 +939,22 @@ void GlRenderer::runDetectionPass(GLuint externalTexId, int frameWidth, int fram
         const float bw = (float)(maxX - minX + 1);
         const float bh = (float)(maxY - minY + 1);
 
+        // Proportions first - it is the test that actually rejects things.
+        const float aspectError =
+            fabsf(bw / std::max(bh, 1e-5f) - nativeAspect) / std::max(nativeAspect, 1e-5f);
+        if (aspectError > MAX_ASPECT_ERROR) continue;
+
         float mismatch = 1e9f;
+        int matchedK = 1;
         for (int k = 1; k <= 8; ++k) {
             const float ew = nativeW * (float)k;
             const float eh = nativeH * (float)k;
             const float m = fabsf(bw - ew) / std::max(ew, 1.0f) +
                             fabsf(bh - eh) / std::max(eh, 1.0f);
-            if (m < mismatch) mismatch = m;
+            if (m < mismatch) {
+                mismatch = m;
+                matchedK = k;
+            }
         }
         if (mismatch > MAX_MISMATCH) continue;
 
@@ -932,6 +962,7 @@ void GlRenderer::runDetectionPass(GLuint externalTexId, int frameWidth, int fram
         if (area > bestArea) {
             bestArea = area;
             bestMismatch = mismatch;
+            bestK = matchedK;
             bestMinX = minX; bestMinY = minY; bestMaxX = maxX; bestMaxY = maxY;
             found = true;
         }
@@ -944,14 +975,36 @@ void GlRenderer::runDetectionPass(GLuint externalTexId, int frameWidth, int fram
         return;
     }
 
-    detectedRect_.x = (int)(bestMinX * sx);
-    detectedRect_.y = (int)(bestMinY * sy);
-    detectedRect_.w = (int)((bestMaxX - bestMinX + 1) * sx);
-    detectedRect_.h = (int)((bestMaxY - bestMinY + 1) * sy);
+    // The measured box is SNAPPED to exactly native*k rather than used as-is,
+    // and this is the whole point of the pass.
+    //
+    // Detection runs on a 320x240 reduction, so one detect row is 4.5 screen
+    // pixels at 1080p: a boundary that lands half a row out yields something
+    // like 240x162 for a 240x160 window. Two rows sounds harmless and is not.
+    // The composite shader snaps uv to the NATIVE grid and then multiplies by
+    // the SOURCE rect's size, so a rect that is 162 tall while native is 160
+    // makes every tap land between two rows, drifting by a full native pixel
+    // at mid-height and two by the bottom - every engine then samples a blend
+    // of neighbours and the picture is uniformly soft. That is the same
+    // "blurred input" failure the sampling convention was fixed for.
+    //
+    // Position is deliberately NOT snapped: being a pixel off merely shifts
+    // the picture, which is invisible, whereas a non-integer SIZE resamples
+    // every single pixel. Centre is preserved so the error splits evenly.
+    const int snapW = detectExpectedW_ * bestK;
+    const int snapH = detectExpectedH_ * bestK;
+    const int measuredCx = (int)((bestMinX + bestMaxX + 1) * 0.5f * sx);
+    const int measuredCy = (int)((bestMinY + bestMaxY + 1) * 0.5f * sy);
+
+    detectedRect_.w = snapW;
+    detectedRect_.h = snapH;
+    detectedRect_.x = std::max(0, std::min(measuredCx - snapW / 2, frameWidth - snapW));
+    detectedRect_.y = std::max(0, std::min(measuredCy - snapH / 2, frameHeight - snapH));
     detectedValid_ = true;
-    ALOGI("Source detected: (%d,%d %dx%d) native=%dx%d mismatch=%.2f",
+    ALOGI("Source detected: (%d,%d %dx%d) native=%dx%d k=%d mismatch=%.2f (raw %dx%d)",
           detectedRect_.x, detectedRect_.y, detectedRect_.w, detectedRect_.h,
-          detectExpectedW_, detectExpectedH_, bestMismatch);
+          detectExpectedW_, detectExpectedH_, bestK, bestMismatch,
+          (int)((bestMaxX - bestMinX + 1) * sx), (int)((bestMaxY - bestMinY + 1) * sy));
 }
 
 void GlRenderer::setPaused(bool paused) {
@@ -983,6 +1036,16 @@ void GlRenderer::drawTransparent() {
 
 bool GlRenderer::clearOverlay() {
     if (!ensureEglContextCurrent()) {
+        // Never fail quietly here. This is the safety valve the whole design
+        // leans on - "any bad state degrades to fully transparent" - and when
+        // it no-ops the overlay keeps covering the screen with a stale frame.
+        // The usual cause is the capture thread still owning the EGL context,
+        // i.e. it was called before the capture was paused and handed back.
+        static int clearFailCount = 0;
+        if (++clearFailCount % 30 == 1) {
+            ALOGE("clearOverlay: no EGL context (is capture still running?) - "
+                  "overlay NOT wiped, count=%d", clearFailCount);
+        }
         return false;
     }
     drawTransparent();
@@ -1063,6 +1126,8 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     glUniform4f(uni_.outputRect, (float)outputRect_.x, (float)outputRect_.y,
                 (float)outputRect_.w, (float)outputRect_.h);
     glUniform2f(uni_.nativeRes, (float)consoleNativeWidth_, (float)consoleNativeHeight_);
+    // Whatever yHiTex_ was actually allocated at - see ensureAiTextures().
+    glUniform1f(uni_.aiScale, (float)(aiScale_ > 0 ? aiScale_ : 1));
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
     glUniform1f(uni_.lcdGrid, lcdGridIntensity_);

@@ -113,6 +113,19 @@ public:
     }
 
     PerformanceStats getStats() const { return stats_; }
+
+    /**
+     * Which backend the network actually ended up on: -1 no network loaded,
+     * 0 ncnn on CPU, 1 ncnn on Vulkan.
+     *
+     * Surfaced in the HUD because "is this running on the GPU?" is otherwise
+     * only answerable by grepping logcat at load time, and the answer decides
+     * whether a frame cost is expected or a fallback nobody noticed.
+     */
+    int aiBackend() const {
+        if (!espcnEngine_.isReady()) return -1;
+        return espcnEngine_.isUsingGpu() ? 1 : 0;
+    }
     void updateAiTime(float timeMs) { stats_.aiMs = timeMs; }
 
     EGLDisplay getEglDisplay() const { return eglDisplay_; }
@@ -221,6 +234,7 @@ private:
         GLint sourceRect{-1};
         GLint outputRect{-1};
         GLint nativeRes{-1};
+        GLint aiScale{-1};
         GLint aiEnabled{-1};
         GLint scanline{-1};
         GLint lcdGrid{-1};
