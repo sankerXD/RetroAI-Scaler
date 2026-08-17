@@ -50,8 +50,10 @@ class NativeBridge {
         binData: ByteArray,
         scaleFactor: Int,
         preferGpu: Boolean,
-        /** 1 for the luminance ESPCN models, 3 for RetroAI's RGB models. */
-        channels: Int
+        /** 1 for the luminance ESPCN models, 3 for RGB input. */
+        inChannels: Int,
+        /** 1 for luminance or depth output, 3 for RetroAI's RGB. */
+        outChannels: Int
     ): Boolean
 
     /** Drops the network; rendering falls back to the GPU shader upscaler. */
@@ -94,6 +96,9 @@ class NativeBridge {
      * multiple of the native size, so sampling block centres returns the
      * emulator's own pixels.
      */
+    /** Depth-driven HD-2D lighting on top of the selected upscaler. */
+    external fun nativeSetHd2d(enabled: Boolean, strength: Float)
+
     external fun nativeRequestFrameCapture()
 
     /** RGBA bytes, top row first, or null if nothing is ready. Fills sizeOut with {w, h}. */

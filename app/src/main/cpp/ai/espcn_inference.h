@@ -35,7 +35,8 @@ public:
                    size_t binSize,
                    int scaleFactor,
                    bool preferGpu,
-                   int channels = 1);
+                   int inChannels = 1,
+                   int outChannels = 1);
 
     bool isUsingGpu() const { return useVulkan_; }
 
@@ -60,12 +61,18 @@ public:
 
     bool isReady() const { return isReady_; }
     int getScaleFactor() const { return scaleFactor_; }
-    /** 1 for the luminance ESPCN models, 3 for RetroAI. */
-    int channels() const { return channels_; }
+    /**
+     * In and out are separate because they stopped agreeing: ESPCN is 1 -> 1,
+     * RetroAI 3 -> 3, and the depth model 3 -> 1 at scale 1. Assuming one
+     * number for both is what would silently size a buffer wrong.
+     */
+    int inChannels() const { return inChannels_; }
+    int outChannels() const { return outChannels_; }
 
 private:
     int scaleFactor_{3};
-    int channels_{1};
+    int inChannels_{1};
+    int outChannels_{1};
     bool isReady_{false};
     bool useVulkan_{false};
 

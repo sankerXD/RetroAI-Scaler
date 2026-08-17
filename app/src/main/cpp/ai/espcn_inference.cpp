@@ -24,7 +24,8 @@ bool EspcnInference::loadModel(const char* paramText,
                                size_t binSize,
                                int scaleFactor,
                                bool preferGpu,
-                               int channels) {
+                               int inChannels,
+                               int outChannels) {
 #if HAS_NCNN
     release();
 
@@ -34,7 +35,8 @@ bool EspcnInference::loadModel(const char* paramText,
     }
 
     scaleFactor_ = scaleFactor > 0 ? scaleFactor : 3;
-    channels_ = (channels == 3) ? 3 : 1;
+    inChannels_ = (inChannels == 3) ? 3 : 1;
+    outChannels_ = (outChannels == 3) ? 3 : 1;
     paramText_.assign(paramText);
     weightBlob_.assign(binData, binData + binSize);
 
@@ -110,14 +112,16 @@ bool EspcnInference::process(
 
     auto* net = static_cast<ncnn::Net*>(ncnnNet_);
 
-    const bool rgb = channels_ == 3;
-    const int pixelType = rgb ? ncnn::Mat::PIXEL_RGB : ncnn::Mat::PIXEL_GRAY;
-    // The blob names are part of each exported model's contract, and the two
-    // families were exported with different ones.
-    const char* inputBlob = rgb ? "input" : "input_y";
-    const char* outputBlob = rgb ? "output" : "output_y";
+    const bool rgbIn = inChannels_ == 3;
+    const bool rgbOut = outChannels_ == 3;
+    // The blob names are part of each exported model's contract. Only the
+    // original ESPCN family used the _y names.
+    const bool espcn = !rgbIn;
+    const char* inputBlob = espcn ? "input_y" : "input";
+    const char* outputBlob = espcn ? "output_y" : "output";
 
-    ncnn::Mat inMat = ncnn::Mat::from_pixels(in, pixelType, inWidth, inHeight);
+    ncnn::Mat inMat = ncnn::Mat::from_pixels(
+        in, rgbIn ? ncnn::Mat::PIXEL_RGB : ncnn::Mat::PIXEL_GRAY, inWidth, inHeight);
     const float normVals[3] = {1.0f / 255.0f, 1.0f / 255.0f, 1.0f / 255.0f};
     inMat.substract_mean_normalize(nullptr, normVals);
 
@@ -129,15 +133,15 @@ bool EspcnInference::process(
     ncnn::Mat outMat;
     int ret = ex.extract(outputBlob, outMat);
     if (ret != 0 || outMat.w != outWidth || outMat.h != outHeight ||
-        outMat.c != channels_) {
+        outMat.c != outChannels_) {
         ALOGE("inference extract failed: ret=%d out=%dx%dx%d (want %dx%dx%d)",
-              ret, outMat.w, outMat.h, outMat.c, outWidth, outHeight, channels_);
+              ret, outMat.w, outMat.h, outMat.c, outWidth, outHeight, outChannels_);
         return false;
     }
 
     const float denormVals[3] = {255.0f, 255.0f, 255.0f};
     outMat.substract_mean_normalize(nullptr, denormVals);
-    outMat.to_pixels(out, pixelType);
+    outMat.to_pixels(out, rgbOut ? ncnn::Mat::PIXEL_RGB : ncnn::Mat::PIXEL_GRAY);
 
     auto endTime = std::chrono::high_resolution_clock::now();
     outInferenceTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();

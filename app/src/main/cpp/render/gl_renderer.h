@@ -89,7 +89,8 @@ public:
                         size_t binSize,
                         int scaleFactor,
                         bool preferGpu,
-                        int channels);
+                        int inChannels,
+                        int outChannels);
 
     /**
      * Paused = the target app is not on screen. The overlay is wiped once and
@@ -111,6 +112,10 @@ public:
 
     /** Scale2x-style edge reconstruction instead of the network. */
     void setPixelEdgeEnabled(bool enabled);
+
+    /** Depth-driven lighting on top of whatever upscaler is running. */
+    void setHd2dEnabled(bool enabled) { hd2dEnabled_ = enabled; }
+    void setHd2dStrength(float strength) { hd2dStrength_ = strength; }
 
     /**
      * Drops the network; rendering falls back to the shader path.
@@ -176,6 +181,16 @@ private:
     bool showSourceGuide_{false};
     /** False under single-app capture: our output is allowed over the source. */
     bool protectSource_{true};
+    /** HD-2D lights the picture with the depth net instead of replacing it. */
+    bool hd2dEnabled_{false};
+    float hd2dStrength_{0.5f};
+    /**
+     * Previous depth map, for the temporal average. 0.35 keeps roughly three
+     * inference frames in flight: enough to settle the estimator's flicker,
+     * short enough that the lighting still follows the scene.
+     */
+    static constexpr float kDepthSmoothing = 0.35f;
+    std::vector<uint8_t> depthHistory_{};
     bool hasGeometry_{false};
     bool paused_{false};
     bool pausedFrameDrawn_{false};
@@ -293,6 +308,14 @@ private:
         GLint aiScale{-1};
         GLint protectSource{-1};
         GLint neuralRgb{-1};
+        GLint showDepth{-1};
+        GLint hd2d{-1};
+        GLint lightDir{-1};
+        GLint relief{-1};
+        GLint occlusion{-1};
+        GLint shadeRadius{-1};
+        GLint shadeStrength{-1};
+        GLint uiNear{-1};
         GLint aiEnabled{-1};
         GLint scanline{-1};
         GLint lcdGrid{-1};

@@ -42,6 +42,14 @@ uniform vec2 uNativeRes;   // console native resolution, e.g. 240x160
 uniform float uAiScale;    // ESPCN reconstruction factor: uYHiTex is uNativeRes * this
 uniform int uProtectSource; // 1 = never paint over the capture window
 uniform int uNeuralRgb;     // 1 = uYHiTex holds RGB, not luminance
+uniform int uShowDepth;     // 1 = uYHiTex is a depth map, draw it directly
+uniform int uHd2d;          // 1 = light the picture with that depth
+uniform vec2 uLightDir;
+uniform float uRelief;
+uniform float uOcclusion;
+uniform float uShadeRadius;
+uniform float uShadeStrength;
+uniform float uUiNear;      // blurred depth above this is an overlay, not scene
 uniform int uAiEnabled;
 uniform float uScanlineIntensity;
 uniform float uMaskStrength;
@@ -147,6 +155,80 @@ vec3 pixelEdgeUpscale(vec2 uv) {
     return mix(mix(topLeft, topRight, w.x), mix(bottomLeft, bottomRight, w.x), w.y);
 }
 
+
+/**
+ * Broad, low-frequency lighting from the estimated depth field.
+ *
+ * WHAT THE FIRST VERSION GOT WRONG
+ *
+ * It read the depth at native scale and darkened wherever depth changed
+ * sharply. That is a correct description of a crease in real geometry - and a
+ * completely wrong one here, because this depth comes from a 2D composite.
+ * Every glyph and every sprite outline IS a depth discontinuity, so the pass
+ * drew a dark rim around each of them: text got shadows, and scrolling text
+ * made those shadows crawl.
+ *
+ * The "skip interface panels" test could never have caught it either. It asked
+ * for near AND locally flat, and a glyph edge is near and by definition not
+ * flat.
+ *
+ * WHAT IT DOES NOW
+ *
+ * The depth is read through a wide ring of taps, far enough apart that
+ * individual letters and sprites vanish into the average and only the shape of
+ * the room survives - which side of the scene is nearer, where the ground
+ * falls away. Lighting that structure is safe; lighting the difference between
+ * a letter and its background never was.
+ *
+ * A depth map estimated from a flat picture describes WHAT OCCLUDES WHAT, not
+ * which way surfaces face. It can carry broad relief and distance. It cannot
+ * carry cast shadows, and asking it to is what produced the blotches.
+ */
+float depthWide(vec2 uv, float lod) {
+    // A real box average from the mip chain, not a ring of point samples.
+    // Smooth and continuous as things move across it, which the ring was not.
+    return textureLod(uYHiTex, uv, lod).r;
+}
+
+vec3 applyShading(vec2 uv, vec3 colour, vec2 texelSize) {
+    // LOD 3 is roughly an 8x8 native-pixel average - wide enough that a whole
+    // glyph and most of a sprite disappear into it, leaving only the shape of
+    // the scene, which is the only thing this depth can describe honestly.
+    float lod = uShadeRadius;
+    vec2 d1 = texelSize * 6.0;
+    float dC = depthWide(uv, lod);
+    float dL = depthWide(uv - vec2(d1.x, 0.0), lod);
+    float dR = depthWide(uv + vec2(d1.x, 0.0), lod);
+    float dU = depthWide(uv - vec2(0.0, d1.y), lod);
+    float dD = depthWide(uv + vec2(0.0, d1.y), lod);
+
+    vec2 grad = vec2(dR - dL, dD - dU);
+
+    // Centred on 1.0, never below. Lighting redistributes brightness rather
+    // than removing it - a base under one multiplies every flat region, which
+    // is most of the frame, and reads as a black sheet over the picture.
+    float lambert = clamp(1.0 + dot(grad, uLightDir) * uRelief, 0.72, 1.35);
+
+    // Distance haze, not contact shadow: far parts of the scene sit a little
+    // deeper. It is the one thing a depth map from a flat image can say with
+    // confidence, and unlike a discontinuity term it outlines nothing.
+    float far = 1.0 - clamp((1.0 - dC) * uOcclusion, 0.0, 0.22);
+
+    // Interface panels and titles are 2D overlays, not geometry, and lighting
+    // them is always wrong - a dialogue box picked up shading, and big lettering
+    // grew shadows that fell across the box behind it.
+    //
+    // The depth model identifies them for us: it puts an overlay right at the
+    // near extreme, and nothing in a real scene sits there - anything genuinely
+    // that close to the camera still has relief across it. Reading this from
+    // the BLURRED depth is what makes it work now; the earlier attempt tested
+    // the raw depth for "near and flat", and a glyph edge is near and by
+    // definition not flat, so it never fired where it was needed.
+    float ui = smoothstep(uUiNear, uUiNear + 0.10, dC);
+
+    return colour * mix(1.0, mix(lambert * far, 1.0, ui), uShadeStrength);
+}
+
 void main() {
     // gl_FragCoord is bottom-up; convert to Android top-left screen space.
     vec2 px = vec2(gl_FragCoord.x, uScreenSize.y - gl_FragCoord.y);
@@ -194,7 +276,14 @@ void main() {
         // except 3x snapped to a grid the texture did not have and threw away
         // exactly the detail the network had just reconstructed.
         vec3 hi = texture(uYHiTex, sharpUV(uv, uNativeRes * uAiScale)).rgb;
-        if (uNeuralRgb != 0) {
+        if (uShowDepth != 0) {
+            // Debug view. Sampled SMOOTHLY, unlike the picture: the shading
+            // reads depth as a continuous field, and showing it snapped to the
+            // native grid makes it look blocky in a way the lighting never
+            // will. The two have opposite sampling needs in the same shader -
+            // the artist's pixels must stay hard, the depth must not.
+            resultColor = vec3(texture(uYHiTex, uv).r);
+        } else if (uNeuralRgb != 0) {
             // RetroAI reconstructs colour too - take it whole. Re-deriving
             // chroma from the input here would undo the repainting that is the
             // entire point of the model.
@@ -245,6 +334,15 @@ void main() {
         resultColor = clamp(resultColor, 0.0, 1.0);
     } else {
         resultColor = sampleSourceSharp(uv);
+    }
+
+    // HD-2D: the picture is whatever the chosen upscaler produced, untouched,
+    // and the network's only contribution is the depth that lights it. Nothing
+    // generative goes near the artist's pixels - which is the entire reason
+    // this works where repainting did not.
+    if (uHd2d != 0) {
+        resultColor = applyShading(uv, resultColor, texelSize);
+        resultColor = clamp(resultColor, 0.0, 1.0);
     }
 
     // ---------------------------------------------------------------
@@ -496,6 +594,14 @@ void GlRenderer::initGLResources() {
         uni_.aiScale     = glGetUniformLocation(oesPassProgram_, "uAiScale");
         uni_.protectSource = glGetUniformLocation(oesPassProgram_, "uProtectSource");
         uni_.neuralRgb   = glGetUniformLocation(oesPassProgram_, "uNeuralRgb");
+        uni_.showDepth   = glGetUniformLocation(oesPassProgram_, "uShowDepth");
+        uni_.hd2d        = glGetUniformLocation(oesPassProgram_, "uHd2d");
+        uni_.lightDir    = glGetUniformLocation(oesPassProgram_, "uLightDir");
+        uni_.relief      = glGetUniformLocation(oesPassProgram_, "uRelief");
+        uni_.occlusion   = glGetUniformLocation(oesPassProgram_, "uOcclusion");
+        uni_.shadeRadius = glGetUniformLocation(oesPassProgram_, "uShadeRadius");
+        uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
+        uni_.uiNear      = glGetUniformLocation(oesPassProgram_, "uUiNear");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
         uni_.scanline    = glGetUniformLocation(oesPassProgram_, "uScanlineIntensity");
         uni_.lcdGrid     = glGetUniformLocation(oesPassProgram_, "uMaskStrength");
@@ -572,11 +678,12 @@ bool GlRenderer::loadEspcnModel(const char* paramText,
                                 size_t binSize,
                                 int scaleFactor,
                                 bool preferGpu,
-                                int channels) {
+                                int inChannels,
+                                int outChannels) {
     // The worker owns the net while it runs; stop it before swapping models.
     stopAiWorker();
     bool ok = espcnEngine_.loadModel(paramText, binData, binSize, scaleFactor,
-                                     preferGpu, channels);
+                                     preferGpu, inChannels, outChannels);
     // Force reallocation so the hi-res texture matches the new scale.
     aiTexWidth_ = 0;
     aiTexHeight_ = 0;
@@ -632,8 +739,7 @@ void GlRenderer::aiWorkerLoop() {
         aiBusy_ = true;
         lock.unlock();
 
-        const int ch = espcnEngine_.channels();
-        localOut.resize((size_t)w * scale * h * scale * ch);
+        localOut.resize((size_t)w * scale * h * scale * espcnEngine_.outChannels());
         float ms = 0.0f;
         bool ok = espcnEngine_.process(
             localIn.data(), w, h, localOut.data(), w * scale, h * scale, ms);
@@ -686,9 +792,18 @@ bool GlRenderer::ensureAiTextures() {
     // colour as well as detail, and forcing it back through a luminance-only
     // texture would throw away the half of its output that makes it look
     // repainted rather than sharpened.
-    const bool rgb = espcnEngine_.channels() == 3;
+    // Both the channel count and the size follow the model: ESPCN is 1 -> 1
+    // upscaled, RetroAI 3 -> 3 upscaled, the depth net 3 -> 1 at scale 1.
+    const bool rgb = espcnEngine_.outChannels() == 3;
     glTexImage2D(GL_TEXTURE_2D, 0, rgb ? GL_RGB8 : GL_R8, w * scale, h * scale, 0,
                  rgb ? GL_RGB : GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    // Mipmaps for the depth map, so the lighting can read a genuinely blurred
+    // version through textureLod instead of averaging a sparse ring of taps by
+    // hand. The ring was its own source of flicker: a moving sprite crosses
+    // individual taps abruptly and the average jumps, which looks exactly like
+    // the network being unstable but is not.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    rgb ? GL_LINEAR : GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -721,7 +836,8 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
     const int w = aiTexWidth_;
     const int h = aiTexHeight_;
     const int scale = aiScale_;
-    const int aiChannels = espcnEngine_.channels();
+    const int inChannels = espcnEngine_.inChannels();
+    const int outChannels = espcnEngine_.outChannels();
 
     // 1. Collect a finished result, if any. Only now do the base texture and
     //    the reconstructed luminance describe the same frame.
@@ -737,16 +853,38 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
                 return false;
             }
         }
-        const size_t expected = (size_t)w * scale * h * scale * aiChannels;
+        const size_t expected = (size_t)w * scale * h * scale * outChannels;
         if (aiResultReady_ && aiOutput_.size() == expected) {
             aiResultReady_ = false;
             uploadReady = true;
             stats_.aiMs = aiLastMs_;
+
+            // Exponential average over the depth, which is what stops the
+            // lighting crawling. The network re-estimates from scratch every
+            // frame, and small disagreements between consecutive estimates are
+            // invisible in the depth itself but very visible once they are
+            // driving light across a character's body.
+            //
+            // Only for depth. A picture must never be blended with the last
+            // one - that is motion blur, and on an upscaler it would be a bug.
+            if (hd2dEnabled_ && outChannels == 1) {
+                if (depthHistory_.size() != aiOutput_.size()) {
+                    depthHistory_ = aiOutput_;
+                } else {
+                    const float a = kDepthSmoothing;
+                    for (size_t i = 0; i < aiOutput_.size(); ++i) {
+                        float blended = depthHistory_[i] * (1.0f - a) + aiOutput_[i] * a;
+                        depthHistory_[i] = (uint8_t)(blended + 0.5f);
+                        aiOutput_[i] = depthHistory_[i];
+                    }
+                }
+            }
             glBindTexture(GL_TEXTURE_2D, yHiTex_);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w * scale, h * scale,
-                            aiChannels == 3 ? GL_RGB : GL_RED,
+                            outChannels == 3 ? GL_RGB : GL_RED,
                             GL_UNSIGNED_BYTE, aiOutput_.data());
+            if (outChannels == 1) glGenerateMipmap(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, 0);
         } else if (aiResultReady_) {
             // Stale result from a different geometry - drop it.
@@ -796,8 +934,8 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
         {
             std::lock_guard<std::mutex> lock(aiMutex_);
             const size_t pixels = (size_t)w * h;
-            aiInput_.resize(pixels * aiChannels);
-            if (aiChannels == 3) {
+            aiInput_.resize(pixels * inChannels);
+            if (inChannels == 3) {
                 // Drop alpha, keep RGB interleaved as ncnn's PIXEL_RGB wants.
                 for (size_t i = 0; i < pixels; ++i) {
                     const uint8_t* px = &readbackBuffer_[i * 4];
@@ -1345,8 +1483,15 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
 
     // NCNN ESPCN luminance reconstruction; falls back to the GPU shader
     // upscaler whenever the model is missing or inference fails.
+    // Whether the network runs is independent of which upscaler draws the
+    // picture. HD-2D needs the depth field no matter what is showing the
+    // frame - gating the inference on "not pixel-edge" left the depth never
+    // computed and the whole pass silently doing nothing.
     bool useNeuralY = false;
-    if (isAiEnabled_ && !pixelEdgeEnabled_) {
+    bool depthReady = false;
+    if (hd2dEnabled_) {
+        depthReady = runEspcnPass(externalTexId, frameWidth, frameHeight);
+    } else if (isAiEnabled_ && !pixelEdgeEnabled_) {
         useNeuralY = runEspcnPass(externalTexId, frameWidth, frameHeight);
     }
     if (!useNeuralY) {
@@ -1369,7 +1514,31 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // Whatever yHiTex_ was actually allocated at - see ensureAiTextures().
     glUniform1f(uni_.aiScale, (float)(aiScale_ > 0 ? aiScale_ : 1));
     glUniform1i(uni_.protectSource, protectSource_ ? 1 : 0);
-    glUniform1i(uni_.neuralRgb, espcnEngine_.channels() == 3 ? 1 : 0);
+    glUniform1i(uni_.neuralRgb, espcnEngine_.outChannels() == 3 ? 1 : 0);
+    // Single-channel output that is NOT upscaled is the depth net; show the
+    // map itself so the thing can be judged before anything is built on it.
+    // Debug view only when HD-2D is off: same model, but one shows the depth
+    // and the other uses it.
+    const bool depthLoaded = espcnEngine_.outChannels() == 1 && aiScale_ == 1
+                             && espcnEngine_.inChannels() == 3;
+    glUniform1i(uni_.showDepth, (depthLoaded && !hd2dEnabled_) ? 1 : 0);
+    glUniform1i(uni_.hd2d, (depthLoaded && hd2dEnabled_ && depthReady) ? 1 : 0);
+    // Light from the upper left, the direction HD-2D games are almost always
+    // lit from - and the one the eye reads as "outdoors, sun".
+    glUniform2f(uni_.lightDir, -0.55f, -0.80f);
+    glUniform1f(uni_.relief, 6.0f);
+    glUniform1f(uni_.occlusion, 0.55f);
+    // Native pixels between taps, and deliberately large. At 10 a whole glyph
+    // and most sprites fall inside one tap spacing and average away, leaving
+    // only the shape of the scene - which is the only thing this depth can
+    // describe honestly.
+    // Mip level, not a pixel radius, since the taps come from the mip chain.
+    glUniform1f(uni_.shadeRadius, 3.0f);
+    glUniform1f(uni_.shadeStrength, hd2dStrength_);
+    // Where the overlay cut-off sits in the normalised depth. 0.74 keeps
+    // characters lit - they are mid-depth - while dropping the panels and
+    // titles the model pins to the very front.
+    glUniform1f(uni_.uiNear, 0.74f);
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
     glUniform1f(uni_.lcdGrid, lcdGridIntensity_);

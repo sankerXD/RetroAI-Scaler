@@ -231,7 +231,8 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeLoadEspcnModel(
     jbyteArray binData,
     jint scaleFactor,
     jboolean preferGpu,
-    jint channels
+    jint inChannels,
+    jint outChannels
 ) {
     std::lock_guard<std::mutex> lock(gPipelineMutex);
     if (!gRenderer || !paramText || !binData) return JNI_FALSE;
@@ -248,7 +249,8 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeLoadEspcnModel(
             (size_t)binSize,
             scaleFactor,
             preferGpu == JNI_TRUE,
-            channels
+            inChannels,
+            outChannels
         );
     }
 
@@ -353,6 +355,20 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeDetachEglContext(
     if (display != EGL_NO_DISPLAY) {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         ALOGI("EGL context detached from capture thread.");
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeSetHd2d(
+    JNIEnv* /* env */,
+    jobject /* this */,
+    jboolean enabled,
+    jfloat strength
+) {
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    if (gRenderer) {
+        gRenderer->setHd2dEnabled(enabled == JNI_TRUE);
+        gRenderer->setHd2dStrength(strength);
     }
 }
 
