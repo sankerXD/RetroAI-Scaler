@@ -181,8 +181,13 @@ data class RenderProfile(
      * How far the lighting is pushed, 0..1. Exposed because the honest answer
      * to "how much is right" is a matter of taste and of the game, and the
      * first fixed value guessed it badly wrong.
+     *
+     * 0.75 is where it was judged on the handheld once the lighting was reading
+     * a genuinely blurred depth. The earlier 0.5 was picked while the pass was
+     * still outlining every glyph, so half strength was as much of that as was
+     * bearable - it was the artefact being turned down, not the light.
      */
-    var hd2dStrength: Float = 0.5f,
+    var hd2dStrength: Float = 0.75f,
     /** Disable RetroArch's own shader when writing its config. */
     var disableRaShader: Boolean = true,
     /** Keep the output clear of the capture window. */
@@ -456,7 +461,7 @@ object ProfilePreference {
             sourceScale = p.getInt(key(console, "sourceScale"), 1),
             showSourceGuide = p.getBoolean(key(console, "guide"), false),
             hd2dEnabled = p.getBoolean(key(console, "hd2d"), false),
-            hd2dStrength = p.getFloat(key(console, "hd2dStrength"), 0.5f),
+            hd2dStrength = p.getFloat(key(console, "hd2dStrength"), 0.75f),
             disableRaShader = p.getBoolean(key(console, "disableShader"), true),
             avoidSourceOverlap = p.getBoolean(key(console, "avoidOverlap"), true),
             captureMode = lastCaptureMode(context)

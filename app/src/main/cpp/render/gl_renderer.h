@@ -337,6 +337,7 @@ private:
         GLint relief{-1};
         GLint occlusion{-1};
         GLint shadeRadius{-1};
+        GLint shadeBase{-1};
         GLint shadeStrength{-1};
         GLint uiMaskTex{-1};
         GLint aiEnabled{-1};
