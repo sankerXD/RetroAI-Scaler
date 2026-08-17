@@ -385,15 +385,24 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * a banner covering someone else's app.
      */
     private fun showRestartNotice(show: Boolean) {
-        if (show == (restartNoticeView != null)) return
-
         if (!show) {
-            restartNoticeView?.let {
-                if (it.isAttachedToWindow) runCatching { windowManager?.removeView(it) }
-            }
+            val view = restartNoticeView ?: return
             restartNoticeView = null
+            // Unconditional. Gating this on isAttachedToWindow orphaned the
+            // banner: that flag is still false between addView and the first
+            // traversal, so a removal landing in that window skipped the
+            // removeView while still clearing the reference - and from then on
+            // every later call short-circuited on a null reference while the
+            // view sat on screen, outliving even the service.
+            try {
+                windowManager?.removeView(view)
+            } catch (e: Exception) {
+                Log.w(TAG, "restart notice removal failed", e)
+            }
             return
         }
+
+        if (restartNoticeView != null) return
 
         val pad = (resources.displayMetrics.density * 20).toInt()
         val view = TextView(this).apply {
@@ -414,9 +423,16 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.CENTER }
 
-        runCatching { windowManager?.addView(view, params) }
-            .onSuccess { restartNoticeView = view }
-            .onFailure { Log.w(TAG, "restart notice could not be shown", it) }
+        // The reference is only kept when the view really went up, so a failed
+        // add can never leave us believing a banner exists - or, worse, believing
+        // one does not while it is on screen.
+        val wm = windowManager ?: return
+        try {
+            wm.addView(view, params)
+            restartNoticeView = view
+        } catch (e: Exception) {
+            Log.w(TAG, "restart notice could not be shown", e)
+        }
     }
 
     private fun scheduleCaptureModeProbe() {
