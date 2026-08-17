@@ -22,6 +22,41 @@ static std::mutex gPipelineMutex;
 // bail out instead of piling up behind the mutex.
 static std::atomic<bool> gPipelineActive{false};
 
+/**
+ * HUD counters, published by the render thread and read by the main thread.
+ *
+ * These deliberately live OUTSIDE the renderer and outside gPipelineMutex.
+ * The capture thread holds that mutex for the whole GPU frame - EGL bind,
+ * EGLImage import, draw and eglSwapBuffers - so anything on the main thread
+ * that takes it to read five floats is queueing behind GPU work at 60-120 Hz.
+ * On an Adreno 840 / 144 Hz handheld that starved the main thread past the
+ * 5 s input-dispatch deadline: opening the floating menu started a 500 ms
+ * stats poll, the poll blocked, and the next tap ANR'd - which also meant the
+ * ESPCN engines could never be selected, because the tap that selects them
+ * was never dispatched.
+ *
+ * Keeping the snapshot in file scope (rather than reading gRenderer without
+ * the lock) is what makes the lock-free read safe: the reader never touches
+ * the renderer, so it cannot race nativeRelease() deleting it.
+ */
+static std::atomic<float> gStatFps{0.0f};
+static std::atomic<float> gStatCaptureMs{0.0f};
+static std::atomic<float> gStatAiMs{0.0f};
+static std::atomic<float> gStatRenderMs{0.0f};
+static std::atomic<float> gStatSwapMs{0.0f};
+/** -1 no network, 0 ncnn on CPU, 1 ncnn on Vulkan. */
+static std::atomic<int> gStatAiBackend{-1};
+
+/** Called from the render thread, which already owns the pipeline mutex. */
+static void publishStats(const PerformanceStats& s, int aiBackend) {
+    gStatFps.store(s.fps, std::memory_order_relaxed);
+    gStatCaptureMs.store(s.captureMs, std::memory_order_relaxed);
+    gStatAiMs.store(s.aiMs, std::memory_order_relaxed);
+    gStatRenderMs.store(s.renderMs, std::memory_order_relaxed);
+    gStatSwapMs.store(s.swapMs, std::memory_order_relaxed);
+    gStatAiBackend.store(aiBackend, std::memory_order_relaxed);
+}
+
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
@@ -77,6 +112,10 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeInit(
     gFrameCropper = std::make_unique<FrameCropper>();
     gFrameCropper->setScreenDimensions(screenWidth, screenHeight);
 
+    // Clear the HUD snapshot so a fresh session never shows the previous run's
+    // numbers in the window before the first frame lands.
+    publishStats(PerformanceStats{}, -1);
+
     gPipelineActive = true;
     ALOGI("Native pipeline initialized successfully.");
     return JNI_TRUE;
@@ -124,10 +163,16 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeProcessHardwareBuffer(
     }
 
     bool success = gRenderer->renderFrame(texId, frameW, frameH);
+    publishStats(gRenderer->getStats(), gRenderer->aiBackend());
     static int frameLogCount = 0;
     if (++frameLogCount % 300 == 1) {
-        ALOGI("frame #%d rendered success=%d (%dx%d, tex=%u)",
-              frameLogCount, success, frameW, frameH, texId);
+        // paused is in here because renderFrame() also returns true while
+        // paused - it draws one transparent frame and then does nothing.
+        // "success=1" alone therefore says the pipeline is ticking, not that
+        // anything was actually painted.
+        ALOGI("frame #%d rendered success=%d paused=%d (%dx%d, tex=%u)",
+              frameLogCount, success, gRenderer->isPaused() ? 1 : 0,
+              frameW, frameH, texId);
     }
     return success ? JNI_TRUE : JNI_FALSE;
 }
@@ -361,14 +406,22 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeGetPerformanceStats(
     jobject /* this */,
     jfloatArray statsOut
 ) {
-    std::lock_guard<std::mutex> lock(gPipelineMutex);
-    if (!gRenderer || !statsOut) return JNI_FALSE;
+    // No gPipelineMutex here, and no gRenderer dereference - see the comment on
+    // the gStat* atomics. This runs on the main thread every 500 ms while the
+    // floating menu is open; taking the pipeline lock here is what ANR'd.
+    if (!gPipelineActive.load(std::memory_order_relaxed) || !statsOut) return JNI_FALSE;
 
-    if (env->GetArrayLength(statsOut) < 5) return JNI_FALSE;
+    if (env->GetArrayLength(statsOut) < 6) return JNI_FALSE;
 
-    PerformanceStats stats = gRenderer->getStats();
-    jfloat buffer[5] = {stats.fps, stats.captureMs, stats.aiMs, stats.renderMs, stats.swapMs};
-    env->SetFloatArrayRegion(statsOut, 0, 5, buffer);
+    jfloat buffer[6] = {
+        gStatFps.load(std::memory_order_relaxed),
+        gStatCaptureMs.load(std::memory_order_relaxed),
+        gStatAiMs.load(std::memory_order_relaxed),
+        gStatRenderMs.load(std::memory_order_relaxed),
+        gStatSwapMs.load(std::memory_order_relaxed),
+        (jfloat)gStatAiBackend.load(std::memory_order_relaxed)
+    };
+    env->SetFloatArrayRegion(statsOut, 0, 6, buffer);
     return JNI_TRUE;
 }
 
