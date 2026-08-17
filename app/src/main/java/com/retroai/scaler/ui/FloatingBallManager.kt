@@ -42,6 +42,10 @@ class FloatingBallManager(
     companion object {
         private const val AUTO_HIDE_DELAY_MS = 3500L
         private const val BALL_SIZE_PX = 56
+
+        /** Burst length and spacing - about two seconds of an animation. */
+        private const val BURST_FRAMES = 15
+        private const val BURST_INTERVAL_MS = 130L
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -79,6 +83,9 @@ class FloatingBallManager(
         Thread(r, "DatasetCapture").apply { isDaemon = true }
     }
     private var isAutoCapturing = false
+    private var captureButton: Button? = null
+    private var autoCaptureButton: Button? = null
+    private var lastCaptureMessage: String? = null
 
     var profile: RenderProfile = ProfilePreference.load(context)
         private set
@@ -419,17 +426,24 @@ class FloatingBallManager(
                     R.id.chipEngineEspcnHq -> UpscaleEngine.ESPCN_HQ
                     R.id.chipEngineEspcnUltra -> UpscaleEngine.ESPCN_ULTRA
                     R.id.chipEngineRetroAi -> UpscaleEngine.RETROAI
+                    R.id.chipEngineDepth -> UpscaleEngine.DEPTH
                     else -> profile.engine
                 }
                 applyEngine()
                 applyRenderProfile()
             }
 
-        root.findViewById<Button>(R.id.btnCaptureFrame).setOnClickListener {
-            captureCorpusFrame(skipSimilar = false)
+        root.findViewById<Button>(R.id.btnCaptureFrame).apply {
+            captureButton = this
+            updateCaptureButtonText()
+            setOnClickListener { captureCorpusFrame(skipSimilar = false) }
+            // Long press for a burst: the transient stuff cannot be caught any
+            // other way, and it needs no second control this way.
+            setOnLongClickListener { startBurst(); true }
         }
 
         root.findViewById<Button>(R.id.btnAutoCapture).apply {
+            autoCaptureButton = this
             updateAutoCaptureText(this)
             setOnClickListener {
                 isAutoCapturing = !isAutoCapturing
@@ -449,6 +463,30 @@ class FloatingBallManager(
                         Toast.LENGTH_LONG
                     ).show()
                 }
+            }
+        }
+
+        root.findViewById<Button>(R.id.btnHd2d).apply {
+            updateHd2dText(this)
+            setOnLongClickListener {
+                // Cycles the strength rather than adding a slider: four steps
+                // is enough to find the level, and the menu is already long.
+                val steps = listOf(0.25f, 0.5f, 0.75f, 1.0f)
+                val next = steps.firstOrNull { it > profile.hd2dStrength + 0.01f } ?: steps.first()
+                profile.hd2dStrength = next
+                profile.hd2dEnabled = true
+                updateHd2dText(this)
+                applyEngine()
+                applyRenderProfile()
+                true
+            }
+            setOnClickListener {
+                profile.hd2dEnabled = !profile.hd2dEnabled
+                updateHd2dText(this)
+                // The depth net has to be loaded for HD-2D and dropped when it
+                // is off - it is the only thing in the pass that costs anything.
+                applyEngine()
+                applyRenderProfile()
             }
         }
 
@@ -538,9 +576,15 @@ class FloatingBallManager(
 
         // Snapshot what the user picked. The worker must not read `profile`,
         // which keeps changing on the main thread.
-        val baseName = profile.modelAssetBaseName()
+        // HD-2D needs the depth net regardless of which upscaler is showing
+        // the picture, so it wins the model slot while it is on.
+        val baseName = if (profile.hd2dEnabled) "retrodepth_base"
+                       else profile.modelAssetBaseName()
         val scaleFactor = profile.aiScale.factor
-        val channels = profile.engine.modelChannels
+        val inChannels = if (profile.hd2dEnabled) 3 else profile.engine.modelInChannels
+        val outChannels = if (profile.hd2dEnabled) 1 else profile.engine.modelOutChannels
+        // The depth net maps native resolution to itself.
+        val modelScale = if (profile.hd2dEnabled || profile.engine.ignoresAiScale) 1 else scaleFactor
         val engineName = profile.engine.displayName
         val generation = engineGeneration.incrementAndGet()
 
@@ -556,7 +600,7 @@ class FloatingBallManager(
                 val bin = context.assets.open("models/$baseName.bin").use { it.readBytes() }
                 // Ask for the GPU for every network; ncnn falls back to CPU when
                 // there is no Vulkan device.
-                if (nativeBridge.nativeLoadEspcnModel(param, bin, scaleFactor, true, channels)) {
+                if (nativeBridge.nativeLoadEspcnModel(param, bin, modelScale, true, inChannels, outChannels)) {
                     null
                 } else {
                     "$engineName 加载失败，已回退"
@@ -596,28 +640,82 @@ class FloatingBallManager(
     }
 
     /**
-     * Silent while auto-capturing: a Toast every two seconds would cover the
-     * game and drown out the one message that matters, a failure.
+     * Burst: BURST_FRAMES grabs in quick succession, keeping every one.
+     *
+     * Battle effects are the hardest thing to collect and the most valuable to
+     * have - flashes, particles and big colour washes are exactly where a
+     * repainting model has the most to invent. They also last a fraction of a
+     * second, so a 2 s poll walks straight past them and a single tap needs
+     * reflexes nobody has.
+     *
+     * The similarity filter is off here on purpose. Consecutive frames of an
+     * animation genuinely differ, and anything that does slip through is
+     * caught by the offline pass, which compares against the whole corpus
+     * rather than just the previous frame. Capture liberally, filter later.
+     */
+    private var burstRemaining = 0
+
+    private val burstRunnable = object : Runnable {
+        override fun run() {
+            if (burstRemaining <= 0) return
+            burstRemaining--
+            captureCorpusFrame(skipSimilar = false)
+            if (burstRemaining > 0) mainHandler.postDelayed(this, BURST_INTERVAL_MS)
+        }
+    }
+
+    private fun startBurst() {
+        burstRemaining = BURST_FRAMES
+        mainHandler.removeCallbacks(burstRunnable)
+        mainHandler.post(burstRunnable)
+    }
+
+    /**
+     * Reports on the button rather than through a Toast.
+     *
+     * A Toast is never seen here: TYPE_TOAST sits at window layer 2005 and our
+     * overlay at TYPE_APPLICATION_OVERLAY 2038, so the enhanced picture is
+     * drawn straight over it. The button label is always visible while the
+     * menu is open, which is exactly when this feedback is wanted, and a
+     * running count says more than a per-capture confirmation anyway.
      */
     private fun captureCorpusFrame(skipSimilar: Boolean) {
         val console = profile.console
         captureExecutor.execute {
             val result = recorder.captureOnce(console, skipSimilar)
-            if (!skipSimilar || !result.saved) {
-                mainHandler.post {
-                    val suffix = if (result.saved) {
-                        "（共 ${recorder.countFor(console)} 张）"
-                    } else {
-                        ""
-                    }
-                    Toast.makeText(context, result.message + suffix, Toast.LENGTH_SHORT).show()
-                }
+            lastCaptureMessage = result.message
+            mainHandler.post {
+                updateCaptureButtonText()
+                updateAutoCaptureText()
             }
         }
     }
 
-    private fun updateAutoCaptureText(button: Button) {
-        button.text = if (isAutoCapturing) "停止自动采集" else "开始自动采集"
+    private fun updateCaptureButtonText() {
+        val button = captureButton ?: return
+        val count = recorder.countFor(profile.console)
+        button.text = when {
+            burstRemaining > 0 -> "连拍中… 还剩 $burstRemaining"
+            lastCaptureMessage == null -> "截取原生帧（长按连拍）"
+            else -> "截取原生帧　已存 $count"
+        }
+    }
+
+    private fun updateAutoCaptureText(button: Button? = autoCaptureButton) {
+        val target = button ?: return
+        target.text = if (isAutoCapturing) {
+            // The last outcome is worth surfacing: most auto-capture calls are
+            // deliberate skips, and without it a stalled counter looks broken.
+            "停止自动采集　${recorder.countFor(profile.console)} 张\n${lastCaptureMessage ?: ""}"
+        } else {
+            "开始自动采集"
+        }
+    }
+
+    private fun updateHd2dText(button: Button) {
+        button.text = if (profile.hd2dEnabled)
+            "HD-2D 光影：开　${(profile.hd2dStrength * 100).toInt()}%"
+        else "HD-2D 光影：关"
     }
 
     private fun updateGuideButtonText(button: Button) {
@@ -634,6 +732,7 @@ class FloatingBallManager(
                 UpscaleEngine.ESPCN_HQ -> R.id.chipEngineEspcnHq
                 UpscaleEngine.ESPCN_ULTRA -> R.id.chipEngineEspcnUltra
                 UpscaleEngine.RETROAI -> R.id.chipEngineRetroAi
+                UpscaleEngine.DEPTH -> R.id.chipEngineDepth
             }
         )
     }
@@ -680,6 +779,7 @@ class FloatingBallManager(
                 UpscaleEngine.ESPCN_HQ -> R.id.chipEngineEspcnHq
                 UpscaleEngine.ESPCN_ULTRA -> R.id.chipEngineEspcnUltra
                 UpscaleEngine.RETROAI -> R.id.chipEngineRetroAi
+                UpscaleEngine.DEPTH -> R.id.chipEngineDepth
             }
         )
         root.findViewById<SwitchMaterial>(R.id.switchAiEnable).isChecked = profile.isAiEnabled
@@ -865,6 +965,7 @@ class FloatingBallManager(
 
     private fun applyRenderProfile() {
         nativeBridge.nativeSetMaskType(profile.maskType.id)
+        nativeBridge.nativeSetHd2d(profile.hd2dEnabled, profile.hd2dStrength)
         nativeBridge.nativeSetRenderConfig(
             profile.isAiEnabled,
             profile.console.nativeWidth,

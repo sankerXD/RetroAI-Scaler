@@ -146,7 +146,7 @@
             android:layout_width="match_parent"
             android:layout_height="40dp"
             android:layout_marginTop="6dp"
-            android:text="截取原生帧"
+            android:text="截取原生帧（长按连拍）"
             android:textColor="@color/primary"
             android:textSize="12sp"
             app:strokeColor="@color/primary" />
@@ -168,6 +168,17 @@
           exposed the toggle, so the one control that shows whether the sampled
           rect matches RetroArch's actual viewport was unreachable.
         -->
+        <Button
+            android:id="@+id/btnHd2d"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="6dp"
+            android:text="HD-2D 光影：关（长按调强度）"
+            android:textColor="@color/primary"
+            android:textSize="12sp"
+            app:strokeColor="@color/primary" />
+
         <Button
             android:id="@+id/btnToggleGuide"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -281,6 +292,18 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="RetroAI 重绘"
+                    android:textColor="@color/chip_text_color"
+                    app:checkedIconVisible="false"
+                    app:chipBackgroundColor="@color/chip_bg_color"
+                    app:chipStrokeColor="@color/chip_stroke_color"
+                    app:chipStrokeWidth="1.5dp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipEngineDepth"
+                    style="@style/Widget.MaterialComponents.Chip.Choice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="深度图"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"

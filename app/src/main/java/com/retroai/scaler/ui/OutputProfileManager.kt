@@ -101,15 +101,36 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      * ESPCN models stay: they are far cheaper and remain the right choice on
      * weaker hardware.
      */
-    RETROAI("RetroAI（重绘 · 需旗舰 GPU）", "retroai");
+    RETROAI("RetroAI（重绘 · 需旗舰 GPU）", "retroai"),
+
+    /**
+     * Diagnostic: shows the estimated depth map instead of a picture.
+     *
+     * Depth is the one piece of the HD-2D pass that needs a network - the
+     * lighting, bloom, tilt-shift and grading built on it are all weightless
+     * shader work. It is here as its own engine so the cost and the quality of
+     * that piece can be judged on device before anything is built on top, the
+     * same way the upscalers were.
+     *
+     * 3 channels in, 1 out, and no upscaling: depth is low-frequency enough to
+     * compute at native resolution, which is most of why it is affordable.
+     */
+    DEPTH("深度图（调试）", "depth");
 
     val usesNetwork: Boolean get() = assetVariant != null
     /** Ultra and RetroAI are both unusable without GPU inference. */
     val needsGpu: Boolean get() = this == ESPCN_ULTRA || this == RETROAI
     val isPixelEdge: Boolean get() = this == PIXEL_EDGE
 
-    /** RetroAI reconstructs colour as well; ESPCN is luminance only. */
-    val modelChannels: Int get() = if (this == RETROAI) 3 else 1
+    /** Anything past the ESPCN family takes full RGB in. */
+    val modelInChannels: Int get() = if (this == ESPCN_FAST || this == ESPCN_HQ ||
+        this == ESPCN_ULTRA) 1 else 3
+
+    /** RetroAI reconstructs colour; ESPCN is luminance; depth is one channel. */
+    val modelOutChannels: Int get() = if (this == RETROAI) 3 else 1
+
+    /** The depth net does not upscale - it maps native resolution to itself. */
+    val ignoresAiScale: Boolean get() = this == DEPTH
 }
 
 /**
@@ -147,6 +168,21 @@ data class RenderProfile(
     var sourceScale: Int = 1,
     var sourceMarginPx: Int = 8,
     var showSourceGuide: Boolean = false,
+
+    /**
+     * Depth-driven lighting. NOT an upscaler - the picture still comes from
+     * whichever engine is selected, and the network's only contribution is the
+     * depth field that lights it. That separation is the whole reason this
+     * works where repainting did not: nothing generative touches the pixels.
+     */
+    var hd2dEnabled: Boolean = false,
+
+    /**
+     * How far the lighting is pushed, 0..1. Exposed because the honest answer
+     * to "how much is right" is a matter of taste and of the game, and the
+     * first fixed value guessed it badly wrong.
+     */
+    var hd2dStrength: Float = 0.5f,
     /** Disable RetroArch's own shader when writing its config. */
     var disableRaShader: Boolean = true,
     /** Keep the output clear of the capture window. */
@@ -307,9 +343,12 @@ data class RenderProfile(
      */
     fun modelAssetBaseName(): String? {
         val variant = engine.assetVariant ?: return null
-        if (aiScale == AiScale.X1) return null
+        // The depth net has nothing to do with the AI factor - it is not an
+        // upscaler, so 1x is a valid setting for it rather than "off".
+        if (aiScale == AiScale.X1 && !engine.ignoresAiScale) return null
         // RetroAI is a separate family with its own naming, not an ESPCN
         // variant - different channel count, different blob names.
+        if (engine == UpscaleEngine.DEPTH) return "retrodepth_base"
         if (engine == UpscaleEngine.RETROAI) return "retrosr_${aiScale.factor}x_base"
         return "espcn_y_${aiScale.factor}x_$variant"
     }
@@ -416,6 +455,8 @@ object ProfilePreference {
             }.getOrDefault(SourceCorner.BOTTOM_RIGHT),
             sourceScale = p.getInt(key(console, "sourceScale"), 1),
             showSourceGuide = p.getBoolean(key(console, "guide"), false),
+            hd2dEnabled = p.getBoolean(key(console, "hd2d"), false),
+            hd2dStrength = p.getFloat(key(console, "hd2dStrength"), 0.5f),
             disableRaShader = p.getBoolean(key(console, "disableShader"), true),
             avoidSourceOverlap = p.getBoolean(key(console, "avoidOverlap"), true),
             captureMode = lastCaptureMode(context)
@@ -435,6 +476,8 @@ object ProfilePreference {
             .putString(key(c, "corner"), profile.sourceCorner.name)
             .putInt(key(c, "sourceScale"), profile.sourceScale)
             .putBoolean(key(c, "guide"), profile.showSourceGuide)
+            .putBoolean(key(c, "hd2d"), profile.hd2dEnabled)
+            .putFloat(key(c, "hd2dStrength"), profile.hd2dStrength)
             .putBoolean(key(c, "disableShader"), profile.disableRaShader)
             .putBoolean(key(c, "avoidOverlap"), profile.avoidSourceOverlap)
             .apply()

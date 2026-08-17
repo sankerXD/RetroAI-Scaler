@@ -38,7 +38,18 @@ class DatasetRecorder(
          */
         private const val MIN_DIFFERENCE = 6.0
 
+        /**
+         * A frame flatter than this carries nothing to learn from. Fades and
+         * loading screens are solid colour, and several turned up in the very
+         * first capture session - they cost disk and epochs while teaching
+         * nothing, and they pull the corpus towards black.
+         */
+        private const val MIN_CONTRAST = 12
+
         private const val THUMB = 16
+
+        private const val MAX_POLLS = 40
+        private const val POLL_INTERVAL_MS = 25L
     }
 
     /** Last kept frame, reduced to a grey thumbnail for the novelty test. */
@@ -67,12 +78,24 @@ class DatasetRecorder(
         // The grab happens on the next rendered frame; at 60-144 Hz a handful
         // of short waits is far more than enough, and bailing out is better
         // than blocking a UI action indefinitely if the pipeline is paused.
-        repeat(40) {
-            pixels = nativeBridge.nativeFetchCapturedFrame(size)
-            if (pixels != null) return@repeat
-            Thread.sleep(25)
+        //
+        // A plain loop, because repeat's `return@repeat` is continue rather
+        // than break: it kept polling after a successful fetch, and since the
+        // renderer hands each frame over exactly once, the very next call
+        // returned null and overwrote the result. Every capture succeeded and
+        // was then thrown away.
+        for (attempt in 0 until MAX_POLLS) {
+            val frame = nativeBridge.nativeFetchCapturedFrame(size)
+            if (frame != null) {
+                pixels = frame
+                break
+            }
+            Thread.sleep(POLL_INTERVAL_MS)
         }
-        val data = pixels ?: return Result(false, "没有取到画面（管线可能已暂停）")
+        val data = pixels ?: run {
+            Log.w(TAG, "no frame after ${MAX_POLLS * POLL_INTERVAL_MS} ms")
+            return Result(false, "没有取到画面（游戏未在前台？）")
+        }
 
         val w = size[0]
         val h = size[1]
@@ -81,6 +104,9 @@ class DatasetRecorder(
         }
 
         val thumb = greyThumbnail(data, w, h)
+        if (thumb.max() - thumb.min() < MIN_CONTRAST) {
+            return Result(false, "画面几乎是纯色（载入/淡出？），已跳过")
+        }
         if (skipSimilar) {
             val previous = lastThumb
             if (previous != null && meanAbsDiff(previous, thumb) < MIN_DIFFERENCE) {
@@ -91,6 +117,7 @@ class DatasetRecorder(
         return try {
             val file = write(data, w, h, console)
             lastThumb = thumb
+            Log.i(TAG, "saved ${file.absolutePath}")
             Result(true, "已保存 ${file.name}")
         } catch (e: Exception) {
             Log.e(TAG, "saving frame failed", e)
