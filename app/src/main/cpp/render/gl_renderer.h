@@ -61,6 +61,15 @@ public:
     void setGeometry(const RectI& source, const RectI& output, bool showSourceGuide,
                      bool protectSource);
 
+    /**
+     * Grabs the capture window at exactly native resolution for the training
+     * corpus. The source region is clean in both capture modes - whole-screen
+     * discards our output over it, single-app never mirrors us - so no
+     * blanking is needed and the grab is instant.
+     */
+    void requestNativeCapture() { nativeCaptureRequested_ = true; }
+    bool takeCapturedFrame(std::vector<uint8_t>& out, int& w, int& h);
+
     /** Starts the capture-mode probe; result arrives a handful of frames later. */
     void requestCaptureModeProbe();
     /** -1 while still unknown, 0 single-app, 1 whole-screen. */
@@ -79,7 +88,8 @@ public:
                         const unsigned char* binData,
                         size_t binSize,
                         int scaleFactor,
-                        bool preferGpu);
+                        bool preferGpu,
+                        int channels);
 
     /**
      * Paused = the target app is not on screen. The overlay is wiped once and
@@ -204,6 +214,14 @@ private:
     std::vector<uint8_t> detectBuffer_{};
     void runDetectionPass(GLuint externalTexId, int frameWidth, int frameHeight);
 
+    bool nativeCaptureRequested_{false};
+    bool capturedValid_{false};
+    int capturedW_{0};
+    int capturedH_{0};
+    std::vector<uint8_t> capturedFrame_{};
+    GLuint captureTex_{0};
+    void runNativeCapture(GLuint externalTexId, int frameWidth, int frameHeight);
+
     /** Renders the whole captured frame into detectTex_ and reads it back. */
     bool readReducedFrame(GLuint externalTexId, int frameWidth, int frameHeight);
     /** Paints the probe marker, or clears if `on` is false. */
@@ -274,6 +292,7 @@ private:
         GLint nativeRes{-1};
         GLint aiScale{-1};
         GLint protectSource{-1};
+        GLint neuralRgb{-1};
         GLint aiEnabled{-1};
         GLint scanline{-1};
         GLint lcdGrid{-1};

@@ -41,6 +41,7 @@ uniform vec4 uOutputRect;  // x, y, w, h
 uniform vec2 uNativeRes;   // console native resolution, e.g. 240x160
 uniform float uAiScale;    // ESPCN reconstruction factor: uYHiTex is uNativeRes * this
 uniform int uProtectSource; // 1 = never paint over the capture window
+uniform int uNeuralRgb;     // 1 = uYHiTex holds RGB, not luminance
 uniform int uAiEnabled;
 uniform float uScanlineIntensity;
 uniform float uMaskStrength;
@@ -185,7 +186,6 @@ void main() {
         // native*scale; chroma rides along on a bilinear tap of the SAME frame
         // (the eye is far less sensitive to chroma resolution).
         vec3 base = texture(uBaseTex, sharpUV(uv, uNativeRes)).rgb;
-        float yLo = getLuma(base);
         // The network output has its own pixel grid, native * uAiScale.
         // Sampling it with plain bilinear smears that grid across the output
         // and drags the whole picture back to mush - snap to it the same way
@@ -193,8 +193,17 @@ void main() {
         // hard-coded to 3.0 while the UI offered 1x/2x/3x/4x, so every scale
         // except 3x snapped to a grid the texture did not have and threw away
         // exactly the detail the network had just reconstructed.
-        float yHi = texture(uYHiTex, sharpUV(uv, uNativeRes * uAiScale)).r;
-        resultColor = clamp(base + (yHi - yLo), 0.0, 1.0);
+        vec3 hi = texture(uYHiTex, sharpUV(uv, uNativeRes * uAiScale)).rgb;
+        if (uNeuralRgb != 0) {
+            // RetroAI reconstructs colour too - take it whole. Re-deriving
+            // chroma from the input here would undo the repainting that is the
+            // entire point of the model.
+            resultColor = clamp(hi, 0.0, 1.0);
+        } else {
+            // ESPCN rebuilds luminance only; chroma rides along from the same
+            // frame's base texture, which is what keeps the two in step.
+            resultColor = clamp(base + (hi.r - getLuma(base)), 0.0, 1.0);
+        }
     } else if (uAiEnabled != 0) {
         // Edge-directed adaptive upscale over native game pixels.
         vec3 c  = sampleSource(uv);
@@ -486,6 +495,7 @@ void GlRenderer::initGLResources() {
         uni_.nativeRes   = glGetUniformLocation(oesPassProgram_, "uNativeRes");
         uni_.aiScale     = glGetUniformLocation(oesPassProgram_, "uAiScale");
         uni_.protectSource = glGetUniformLocation(oesPassProgram_, "uProtectSource");
+        uni_.neuralRgb   = glGetUniformLocation(oesPassProgram_, "uNeuralRgb");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
         uni_.scanline    = glGetUniformLocation(oesPassProgram_, "uScanlineIntensity");
         uni_.lcdGrid     = glGetUniformLocation(oesPassProgram_, "uMaskStrength");
@@ -561,10 +571,12 @@ bool GlRenderer::loadEspcnModel(const char* paramText,
                                 const unsigned char* binData,
                                 size_t binSize,
                                 int scaleFactor,
-                                bool preferGpu) {
+                                bool preferGpu,
+                                int channels) {
     // The worker owns the net while it runs; stop it before swapping models.
     stopAiWorker();
-    bool ok = espcnEngine_.loadModel(paramText, binData, binSize, scaleFactor, preferGpu);
+    bool ok = espcnEngine_.loadModel(paramText, binData, binSize, scaleFactor,
+                                     preferGpu, channels);
     // Force reallocation so the hi-res texture matches the new scale.
     aiTexWidth_ = 0;
     aiTexHeight_ = 0;
@@ -620,9 +632,10 @@ void GlRenderer::aiWorkerLoop() {
         aiBusy_ = true;
         lock.unlock();
 
-        localOut.resize((size_t)w * scale * h * scale);
+        const int ch = espcnEngine_.channels();
+        localOut.resize((size_t)w * scale * h * scale * ch);
         float ms = 0.0f;
-        bool ok = espcnEngine_.processLuminance(
+        bool ok = espcnEngine_.process(
             localIn.data(), w, h, localOut.data(), w * scale, h * scale, ms);
 
         lock.lock();
@@ -669,7 +682,13 @@ bool GlRenderer::ensureAiTextures() {
 
     glGenTextures(1, &yHiTex_);
     glBindTexture(GL_TEXTURE_2D, yHiTex_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w * scale, h * scale, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    // RGB for RetroAI, single-channel for the ESPCN models. RetroAI rebuilds
+    // colour as well as detail, and forcing it back through a luminance-only
+    // texture would throw away the half of its output that makes it look
+    // repainted rather than sharpened.
+    const bool rgb = espcnEngine_.channels() == 3;
+    glTexImage2D(GL_TEXTURE_2D, 0, rgb ? GL_RGB8 : GL_R8, w * scale, h * scale, 0,
+                 rgb ? GL_RGB : GL_RED, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -702,6 +721,7 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
     const int w = aiTexWidth_;
     const int h = aiTexHeight_;
     const int scale = aiScale_;
+    const int aiChannels = espcnEngine_.channels();
 
     // 1. Collect a finished result, if any. Only now do the base texture and
     //    the reconstructed luminance describe the same frame.
@@ -717,14 +737,16 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
                 return false;
             }
         }
-        if (aiResultReady_ && aiOutput_.size() == (size_t)w * scale * h * scale) {
+        const size_t expected = (size_t)w * scale * h * scale * aiChannels;
+        if (aiResultReady_ && aiOutput_.size() == expected) {
             aiResultReady_ = false;
             uploadReady = true;
             stats_.aiMs = aiLastMs_;
             glBindTexture(GL_TEXTURE_2D, yHiTex_);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w * scale, h * scale,
-                            GL_RED, GL_UNSIGNED_BYTE, aiOutput_.data());
+                            aiChannels == 3 ? GL_RGB : GL_RED,
+                            GL_UNSIGNED_BYTE, aiOutput_.data());
             glBindTexture(GL_TEXTURE_2D, 0);
         } else if (aiResultReady_) {
             // Stale result from a different geometry - drop it.
@@ -773,11 +795,21 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
 
         {
             std::lock_guard<std::mutex> lock(aiMutex_);
-            aiInput_.resize((size_t)w * h);
             const size_t pixels = (size_t)w * h;
-            for (size_t i = 0; i < pixels; ++i) {
-                const uint8_t* px = &readbackBuffer_[i * 4];
-                aiInput_[i] = (uint8_t)((px[0] * 77 + px[1] * 150 + px[2] * 29) >> 8);
+            aiInput_.resize(pixels * aiChannels);
+            if (aiChannels == 3) {
+                // Drop alpha, keep RGB interleaved as ncnn's PIXEL_RGB wants.
+                for (size_t i = 0; i < pixels; ++i) {
+                    const uint8_t* px = &readbackBuffer_[i * 4];
+                    aiInput_[i * 3 + 0] = px[0];
+                    aiInput_[i * 3 + 1] = px[1];
+                    aiInput_[i * 3 + 2] = px[2];
+                }
+            } else {
+                for (size_t i = 0; i < pixels; ++i) {
+                    const uint8_t* px = &readbackBuffer_[i * 4];
+                    aiInput_[i] = (uint8_t)((px[0] * 77 + px[1] * 150 + px[2] * 29) >> 8);
+                }
             }
             aiJobWidth_ = w;
             aiJobHeight_ = h;
@@ -910,6 +942,83 @@ void GlRenderer::sampleProbeRegion(float outRgb[3]) const {
     outRgb[0] = (float)(sum[0] / n / 255.0);
     outRgb[1] = (float)(sum[1] / n / 255.0);
     outRgb[2] = (float)(sum[2] / n / 255.0);
+}
+
+/**
+ * Renders the capture window into a native-resolution target and reads it back.
+ *
+ * Reuses Y_EXTRACT_FRAG_SRC, which despite the name emits RGB through exactly
+ * the same texel-centre mapping the composite pass uses. Because the source
+ * rect is snapped to an integer multiple of the native size, sampling those
+ * centres lands in the middle of each block and recovers the emulator's
+ * original pixels unchanged - this is a lossless grab, not a downscale.
+ */
+void GlRenderer::runNativeCapture(GLuint externalTexId, int frameWidth, int frameHeight) {
+    nativeCaptureRequested_ = false;
+    if (yExtractProgram_ == 0 || aiFbo_ == 0) return;
+    const int w = consoleNativeWidth_;
+    const int h = consoleNativeHeight_;
+    if (w <= 0 || h <= 0 || !sourceRect_.valid()) {
+        ALOGW("native capture skipped: geometry not ready");
+        return;
+    }
+
+    if (captureTex_ == 0) {
+        glGenTextures(1, &captureTex_);
+        glBindTexture(GL_TEXTURE_2D, captureTex_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        capturedW_ = 0;
+    }
+    if (capturedW_ != w || capturedH_ != h) {
+        glBindTexture(GL_TEXTURE_2D, captureTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, aiFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, captureTex_, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        ALOGE("native capture FBO incomplete");
+        return;
+    }
+
+    glViewport(0, 0, w, h);
+    glUseProgram(yExtractProgram_);
+    glUniform2f(yUni_.captureSize, (float)frameWidth, (float)frameHeight);
+    glUniform4f(yUni_.sourceRect, (float)sourceRect_.x, (float)sourceRect_.y,
+                (float)sourceRect_.w, (float)sourceRect_.h);
+    glUniform2f(yUni_.nativeRes, (float)w, (float)h);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, externalTexId);
+    glUniform1i(yUni_.externalTex, 0);
+    glBindVertexArray(quadVao_);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+
+    capturedFrame_.assign((size_t)w * h * 4, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, capturedFrame_.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    capturedW_ = w;
+    capturedH_ = h;
+    capturedValid_ = true;
+    ALOGI("native frame captured: %dx%d from source (%d,%d %dx%d)",
+          w, h, sourceRect_.x, sourceRect_.y, sourceRect_.w, sourceRect_.h);
+}
+
+bool GlRenderer::takeCapturedFrame(std::vector<uint8_t>& out, int& w, int& h) {
+    if (!capturedValid_) return false;
+    out = capturedFrame_;
+    w = capturedW_;
+    h = capturedH_;
+    capturedValid_ = false;
+    return true;
 }
 
 void GlRenderer::requestCaptureModeProbe() {
@@ -1226,6 +1335,12 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
         return false;
     }
 
+    // Before the composite: the FBO and viewport it needs are reset by the
+    // composite pass that follows, and the picture still gets drawn this frame.
+    if (nativeCaptureRequested_) {
+        runNativeCapture(externalTexId, frameWidth, frameHeight);
+    }
+
     auto renderStartTime = std::chrono::high_resolution_clock::now();
 
     // NCNN ESPCN luminance reconstruction; falls back to the GPU shader
@@ -1254,6 +1369,7 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // Whatever yHiTex_ was actually allocated at - see ensureAiTextures().
     glUniform1f(uni_.aiScale, (float)(aiScale_ > 0 ? aiScale_ : 1));
     glUniform1i(uni_.protectSource, protectSource_ ? 1 : 0);
+    glUniform1i(uni_.neuralRgb, espcnEngine_.channels() == 3 ? 1 : 0);
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
     glUniform1f(uni_.lcdGrid, lcdGridIntensity_);
@@ -1340,6 +1456,10 @@ void GlRenderer::release() {
             glDeleteTextures(2, baseTex_);
             baseTex_[0] = 0;
             baseTex_[1] = 0;
+        }
+        if (captureTex_ != 0) {
+            glDeleteTextures(1, &captureTex_);
+            captureTex_ = 0;
         }
         if (yHiTex_ != 0) {
             glDeleteTextures(1, &yHiTex_);

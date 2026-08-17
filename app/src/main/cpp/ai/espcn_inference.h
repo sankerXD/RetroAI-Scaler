@@ -22,23 +22,33 @@ public:
      * paramText must be a NUL-terminated ncnn .param document.
      * binData/binSize is the matching .bin blob.
      */
+    /**
+     * channels selects the model family, and with it the blob names the net
+     * is driven through:
+     *   1 - the ESPCN models, luminance only, "input_y" / "output_y"
+     *   3 - RetroAI, full RGB, "input" / "output"
+     * The two coexist: ESPCN stays the choice for weaker hardware, and the
+     * shapes are incompatible, so one flag has to say which is loaded.
+     */
     bool loadModel(const char* paramText,
                    const unsigned char* binData,
                    size_t binSize,
                    int scaleFactor,
-                   bool preferGpu);
+                   bool preferGpu,
+                   int channels = 1);
 
     bool isUsingGpu() const { return useVulkan_; }
 
     void release();
 
     /**
-     * inY  : native-resolution luminance, inWidth * inHeight bytes
-     * outY : must hold (inWidth * scale) * (inHeight * scale) bytes
+     * in  : native-resolution pixels, inWidth * inHeight * channels() bytes,
+     *       interleaved (Y, or RGB)
+     * out : must hold (inWidth * scale) * (inHeight * scale) * channels() bytes
      * Returns false if no model is loaded - the caller should then fall back to
      * the GPU shader path instead of showing a blank frame.
      */
-    bool processLuminance(
+    bool process(
         const uint8_t* inY,
         int inWidth,
         int inHeight,
@@ -50,9 +60,12 @@ public:
 
     bool isReady() const { return isReady_; }
     int getScaleFactor() const { return scaleFactor_; }
+    /** 1 for the luminance ESPCN models, 3 for RetroAI. */
+    int channels() const { return channels_; }
 
 private:
     int scaleFactor_{3};
+    int channels_{1};
     bool isReady_{false};
     bool useVulkan_{false};
 

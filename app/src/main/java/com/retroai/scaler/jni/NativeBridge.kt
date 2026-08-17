@@ -49,7 +49,9 @@ class NativeBridge {
         paramText: String,
         binData: ByteArray,
         scaleFactor: Int,
-        preferGpu: Boolean
+        preferGpu: Boolean,
+        /** 1 for the luminance ESPCN models, 3 for RetroAI's RGB models. */
+        channels: Int
     ): Boolean
 
     /** Drops the network; rendering falls back to the GPU shader upscaler. */
@@ -86,6 +88,17 @@ class NativeBridge {
      * Starts the capture-mode probe. Needs frames to be flowing; the result
      * shows up a handful of frames later via [nativeGetCaptureMode].
      */
+    /**
+     * Grabs one frame of the capture window at exactly native resolution, for
+     * building the training corpus. Lossless: the source rect is an integer
+     * multiple of the native size, so sampling block centres returns the
+     * emulator's own pixels.
+     */
+    external fun nativeRequestFrameCapture()
+
+    /** RGBA bytes, top row first, or null if nothing is ready. Fills sizeOut with {w, h}. */
+    external fun nativeFetchCapturedFrame(sizeOut: IntArray): ByteArray?
+
     external fun nativeRequestCaptureModeProbe()
 
     /** -1 still unknown, 0 single-app capture, 1 whole-screen capture. */

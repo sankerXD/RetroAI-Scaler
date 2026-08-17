@@ -23,7 +23,8 @@ bool EspcnInference::loadModel(const char* paramText,
                                const unsigned char* binData,
                                size_t binSize,
                                int scaleFactor,
-                               bool preferGpu) {
+                               bool preferGpu,
+                               int channels) {
 #if HAS_NCNN
     release();
 
@@ -33,6 +34,7 @@ bool EspcnInference::loadModel(const char* paramText,
     }
 
     scaleFactor_ = scaleFactor > 0 ? scaleFactor : 3;
+    channels_ = (channels == 3) ? 3 : 1;
     paramText_.assign(paramText);
     weightBlob_.assign(binData, binData + binSize);
 
@@ -84,21 +86,21 @@ bool EspcnInference::loadModel(const char* paramText,
 #endif
 }
 
-bool EspcnInference::processLuminance(
-    const uint8_t* inY,
+bool EspcnInference::process(
+    const uint8_t* in,
     int inWidth,
     int inHeight,
-    uint8_t* outY,
+    uint8_t* out,
     int outWidth,
     int outHeight,
     float& outInferenceTimeMs
 ) {
     outInferenceTimeMs = 0.0f;
-    if (!isReady_ || !inY || !outY || inWidth <= 0 || inHeight <= 0) {
+    if (!isReady_ || !in || !out || inWidth <= 0 || inHeight <= 0) {
         return false;
     }
     if (outWidth != inWidth * scaleFactor_ || outHeight != inHeight * scaleFactor_) {
-        ALOGE("processLuminance: size mismatch %dx%d -> %dx%d (scale %d)",
+        ALOGE("process: size mismatch %dx%d -> %dx%d (scale %d)",
               inWidth, inHeight, outWidth, outHeight, scaleFactor_);
         return false;
     }
@@ -108,25 +110,34 @@ bool EspcnInference::processLuminance(
 
     auto* net = static_cast<ncnn::Net*>(ncnnNet_);
 
-    ncnn::Mat inMat = ncnn::Mat::from_pixels(inY, ncnn::Mat::PIXEL_GRAY, inWidth, inHeight);
-    const float normVals[1] = {1.0f / 255.0f};
+    const bool rgb = channels_ == 3;
+    const int pixelType = rgb ? ncnn::Mat::PIXEL_RGB : ncnn::Mat::PIXEL_GRAY;
+    // The blob names are part of each exported model's contract, and the two
+    // families were exported with different ones.
+    const char* inputBlob = rgb ? "input" : "input_y";
+    const char* outputBlob = rgb ? "output" : "output_y";
+
+    ncnn::Mat inMat = ncnn::Mat::from_pixels(in, pixelType, inWidth, inHeight);
+    const float normVals[3] = {1.0f / 255.0f, 1.0f / 255.0f, 1.0f / 255.0f};
     inMat.substract_mean_normalize(nullptr, normVals);
 
     ncnn::Extractor ex = net->create_extractor();
     ex.set_light_mode(true);
     ex.set_num_threads(2);
-    ex.input("input_y", inMat);
+    ex.input(inputBlob, inMat);
 
     ncnn::Mat outMat;
-    int ret = ex.extract("output_y", outMat);
-    if (ret != 0 || outMat.w != outWidth || outMat.h != outHeight || outMat.c != 1) {
-        ALOGE("ESPCN extract failed: ret=%d out=%dx%dx%d", ret, outMat.w, outMat.h, outMat.c);
+    int ret = ex.extract(outputBlob, outMat);
+    if (ret != 0 || outMat.w != outWidth || outMat.h != outHeight ||
+        outMat.c != channels_) {
+        ALOGE("inference extract failed: ret=%d out=%dx%dx%d (want %dx%dx%d)",
+              ret, outMat.w, outMat.h, outMat.c, outWidth, outHeight, channels_);
         return false;
     }
 
-    const float denormVals[1] = {255.0f};
+    const float denormVals[3] = {255.0f, 255.0f, 255.0f};
     outMat.substract_mean_normalize(nullptr, denormVals);
-    outMat.to_pixels(outY, ncnn::Mat::PIXEL_GRAY);
+    outMat.to_pixels(out, pixelType);
 
     auto endTime = std::chrono::high_resolution_clock::now();
     outInferenceTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();

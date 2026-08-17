@@ -230,7 +230,8 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeLoadEspcnModel(
     jstring paramText,
     jbyteArray binData,
     jint scaleFactor,
-    jboolean preferGpu
+    jboolean preferGpu,
+    jint channels
 ) {
     std::lock_guard<std::mutex> lock(gPipelineMutex);
     if (!gRenderer || !paramText || !binData) return JNI_FALSE;
@@ -246,7 +247,8 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeLoadEspcnModel(
             reinterpret_cast<const unsigned char*>(binChars),
             (size_t)binSize,
             scaleFactor,
-            preferGpu == JNI_TRUE
+            preferGpu == JNI_TRUE,
+            channels
         );
     }
 
@@ -424,6 +426,45 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeGetCaptureMode(
 ) {
     std::lock_guard<std::mutex> lock(gPipelineMutex);
     return gRenderer ? (jint)gRenderer->captureModeResult() : (jint)-1;
+}
+
+/** Asks for one native-resolution grab of the capture window. */
+JNIEXPORT void JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeRequestFrameCapture(
+    JNIEnv* /* env */,
+    jobject /* this */
+) {
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    if (gRenderer) gRenderer->requestNativeCapture();
+}
+
+/**
+ * Hands the grabbed frame over as RGBA bytes, top row first.
+ * sizeOut receives {width, height}. Returns false while nothing is ready.
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeFetchCapturedFrame(
+    JNIEnv* env,
+    jobject /* this */,
+    jintArray sizeOut
+) {
+    std::vector<uint8_t> pixels;
+    int w = 0, h = 0;
+    {
+        std::lock_guard<std::mutex> lock(gPipelineMutex);
+        if (!gRenderer || !gRenderer->takeCapturedFrame(pixels, w, h)) return nullptr;
+    }
+    if (pixels.empty() || w <= 0 || h <= 0) return nullptr;
+
+    if (sizeOut && env->GetArrayLength(sizeOut) >= 2) {
+        jint dims[2] = {w, h};
+        env->SetIntArrayRegion(sizeOut, 0, 2, dims);
+    }
+    jbyteArray out = env->NewByteArray((jsize)pixels.size());
+    if (!out) return nullptr;
+    env->SetByteArrayRegion(out, 0, (jsize)pixels.size(),
+                            reinterpret_cast<const jbyte*>(pixels.data()));
+    return out;
 }
 
 JNIEXPORT jboolean JNICALL
