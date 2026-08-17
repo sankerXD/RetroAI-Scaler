@@ -268,12 +268,10 @@ class MainActivity : AppCompatActivity() {
             putExtra(OverlayService.EXTRA_PROJECTION_DATA, data)
         }
         ContextCompat.startForegroundService(this, intent)
-
-        Toast.makeText(
-            this,
-            "AI 增强已启动。切回 RetroArch，把画面对齐到粉色取景框内",
-            Toast.LENGTH_LONG
-        ).show()
+        // No toast here: the capture window is measured off a real frame, so
+        // there is nothing for the user to line up by hand. The service's own
+        // "已配置 <平台>，请重启 RetroArch" is the one that still tells them
+        // something they have to act on.
     }
 
     private fun stopOverlayService() {

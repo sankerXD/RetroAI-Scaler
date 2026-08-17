@@ -135,6 +135,23 @@
             android:textSize="12sp"
             app:strokeColor="@color/primary" />
 
+        <!--
+          Draws a pink ring around where the app BELIEVES the capture window
+          sits. The renderer has always been able to draw it, but nothing ever
+          exposed the toggle, so the one control that shows whether the sampled
+          rect matches RetroArch's actual viewport was unreachable.
+        -->
+        <Button
+            android:id="@+id/btnToggleGuide"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="6dp"
+            android:text="显示取景框"
+            android:textColor="@color/primary"
+            android:textSize="12sp"
+            app:strokeColor="@color/primary" />
+
 
         <LinearLayout
             android:layout_width="match_parent"

@@ -51,9 +51,19 @@
         android:requestLegacyExternalStorage="true"
         tools:targetApi="31">
 
+        <!--
+          singleTask, not the default "standard": this is a one-window control
+          panel, and stacking instances of it is never what anyone wants.
+          Without it the activity launches LAUNCH_MULTIPLE, and duplicate
+          full-screen BASE_APPLICATION windows pile up above the launcher.
+          They are touchable, so they silently swallow every tap meant for
+          whatever is behind them - the screen shows the desktop while nothing
+          on it responds.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:theme="@style/Theme.RetroAIScaler">
             <intent-filter>
