@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -22,6 +23,10 @@ import com.retroai.scaler.ui.ProfilePreference
 import com.retroai.scaler.service.OverlayService
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        private const val TAG = "MainActivity"
+    }
 
     private lateinit var tvStatusText: TextView
     private lateinit var tvDeviceInfo: TextView
@@ -57,6 +62,42 @@ class MainActivity : AppCompatActivity() {
         initViews()
         checkHardwareCapabilities()
         updatePermissionButtons()
+        healLeftoverRetroArchConfig()
+    }
+
+    /**
+     * Puts RetroArch's config back if a previous session did not get to.
+     *
+     * The service restores on stop, but it cannot always run: ending the
+     * projection - which is what quitting the emulator does - lets the system
+     * kill a mediaProjection foreground service outright, and nothing runs
+     * after that. RetroArch is then left drawing its viewport into a corner,
+     * which reads as "RetroArch is broken".
+     *
+     * Opening this app is exactly what someone does next, so heal here too. It
+     * is only ever a no-op or a repair: the restore touches nothing but files
+     * carrying our own marker line.
+     */
+    private fun healLeftoverRetroArchConfig() {
+        Thread {
+            try {
+                val manager = RetroArchConfigManager(applicationContext)
+                if (!manager.hasModifiedFiles()) return@Thread
+                val result = manager.restoreFromLatestBackup()
+                Log.i(TAG, "healed leftover RetroArch config: ${result.message}")
+                if (result.ok) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            "检测到上次未还原的 RetroArch 配置，已自动还原",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "healing leftover config failed", e)
+            }
+        }.apply { name = "ConfigHeal"; isDaemon = true }.start()
     }
 
     private fun initViews() {
