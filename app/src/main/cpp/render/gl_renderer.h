@@ -273,6 +273,15 @@ private:
     GLuint aiFbo_{0};
     GLuint baseTex_[2]{0, 0};   // native-res RGB, ping-pong
     GLuint yHiTex_{0};          // ESPCN output, scale * native
+    /**
+     * True when yHiTex_ holds a depth field rather than a picture.
+     *
+     * The two want opposite sampling: the picture must stay hard-edged and is
+     * read at level 0 only, while the shading needs a genuinely blurred depth
+     * through textureLod. Only the depth gets a mipmap chain and a mipmapping
+     * filter, so neither can pick up the other's treatment.
+     */
+    bool yHiIsDepth_{false};
     int aiSubmitIndex_{1};
     int aiDisplayIndex_{0};
     bool hasAiPair_{false};

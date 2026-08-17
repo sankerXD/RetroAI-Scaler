@@ -795,6 +795,9 @@ bool GlRenderer::ensureAiTextures() {
     // Both the channel count and the size follow the model: ESPCN is 1 -> 1
     // upscaled, RetroAI 3 -> 3 upscaled, the depth net 3 -> 1 at scale 1.
     const bool rgb = espcnEngine_.outChannels() == 3;
+    // The depth net is the one that takes RGB in, emits a single channel and
+    // does not upscale. Every other model here produces a picture.
+    yHiIsDepth_ = !rgb && espcnEngine_.inChannels() == 3 && scale == 1;
     glTexImage2D(GL_TEXTURE_2D, 0, rgb ? GL_RGB8 : GL_R8, w * scale, h * scale, 0,
                  rgb ? GL_RGB : GL_RED, GL_UNSIGNED_BYTE, nullptr);
     // Mipmaps for the depth map, so the lighting can read a genuinely blurred
@@ -802,12 +805,30 @@ bool GlRenderer::ensureAiTextures() {
     // hand. The ring was its own source of flicker: a moving sprite crosses
     // individual taps abruptly and the average jumps, which looks exactly like
     // the network being unstable but is not.
+    //
+    // The filter is what actually enables that read, and it must be set ONCE.
+    // A second glTexParameteri putting MIN_FILTER back to GL_LINEAR used to
+    // follow this line, and a non-mipmapping filter makes GLES ignore the
+    // explicit LOD in textureLod entirely and sample level 0 - so the "wide
+    // blur" the shading is built on was silently the raw native-resolution
+    // depth. Every glyph and sprite outline is a discontinuity in that, which
+    // is exactly the text shadows and lit dialogue boxes the pass was supposed
+    // to have stopped producing. The mipmap chain was being generated all
+    // along; nothing ever sampled it.
+    //
+    // Picture textures keep the plain filter: they are read at level 0 through
+    // sharpUV and must never soften into a mip.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                    rgb ? GL_LINEAR : GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    yHiIsDepth_ ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // Build the chain up front so the texture is mipmap-complete from the
+    // moment it exists. A mipmapping filter over a texture with only a base
+    // level samples as opaque black, and the window between allocation and the
+    // first inference result is exactly when the composite may already be
+    // binding it.
+    if (yHiIsDepth_) glGenerateMipmap(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glBindFramebuffer(GL_FRAMEBUFFER, aiFbo_);
@@ -884,7 +905,9 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w * scale, h * scale,
                             outChannels == 3 ? GL_RGB : GL_RED,
                             GL_UNSIGNED_BYTE, aiOutput_.data());
-            if (outChannels == 1) glGenerateMipmap(GL_TEXTURE_2D);
+            // Only the depth is ever read through a mip level; regenerating the
+            // chain for a picture texture is per-frame work nothing samples.
+            if (yHiIsDepth_) glGenerateMipmap(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, 0);
         } else if (aiResultReady_) {
             // Stale result from a different geometry - drop it.
@@ -1494,7 +1517,11 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     } else if (isAiEnabled_ && !pixelEdgeEnabled_) {
         useNeuralY = runEspcnPass(externalTexId, frameWidth, frameHeight);
     }
-    if (!useNeuralY) {
+    // Zeroed only when no network ran at all. Keying this on useNeuralY alone
+    // hid the depth net's cost, because HD-2D never sets that flag - the HUD
+    // read 0.0ms with a 7ms inference in flight, which is precisely the reading
+    // someone checks to decide whether the pass is even running.
+    if (!useNeuralY && !depthReady) {
         stats_.aiMs = 0.0f;
     }
 
@@ -1633,6 +1660,7 @@ void GlRenderer::release() {
         if (yHiTex_ != 0) {
             glDeleteTextures(1, &yHiTex_);
             yHiTex_ = 0;
+            yHiIsDepth_ = false;
         }
         if (detectTex_ != 0) {
             glDeleteTextures(1, &detectTex_);
