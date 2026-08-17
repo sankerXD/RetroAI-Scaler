@@ -136,6 +136,33 @@
             app:strokeColor="@color/primary" />
 
         <!--
+          Corpus capture. Lives next to the detect controls because it depends
+          on the same measured capture window: the grab is only lossless while
+          that rect is an exact integer multiple of the native resolution.
+        -->
+        <Button
+            android:id="@+id/btnCaptureFrame"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="6dp"
+            android:text="截取原生帧"
+            android:textColor="@color/primary"
+            android:textSize="12sp"
+            app:strokeColor="@color/primary" />
+
+        <Button
+            android:id="@+id/btnAutoCapture"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="6dp"
+            android:text="开始自动采集"
+            android:textColor="@color/primary"
+            android:textSize="12sp"
+            app:strokeColor="@color/primary" />
+
+        <!--
           Draws a pink ring around where the app BELIEVES the capture window
           sits. The renderer has always been able to draw it, but nothing ever
           exposed the toggle, so the one control that shows whether the sampled
@@ -242,6 +269,18 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="ESPCN Ultra"
+                    android:textColor="@color/chip_text_color"
+                    app:checkedIconVisible="false"
+                    app:chipBackgroundColor="@color/chip_bg_color"
+                    app:chipStrokeColor="@color/chip_stroke_color"
+                    app:chipStrokeWidth="1.5dp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipEngineRetroAi"
+                    style="@style/Widget.MaterialComponents.Chip.Choice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="RetroAI 重绘"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"

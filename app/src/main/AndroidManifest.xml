@@ -72,6 +72,26 @@
             </intent-filter>
         </activity>
 
+        <!--
+          Second launcher entry for the corpus capture tool. Same APK on
+          purpose: collecting frames needs the projection, the measured capture
+          window and the native-output config that the enhancer already owns,
+          so a separate project would be a copy of that pipeline. Drop the
+          intent-filter to retire it from the launcher without losing the code -
+          GBA is only the first console to be trained.
+        -->
+        <activity
+            android:name=".CaptureActivity"
+            android:exported="true"
+            android:label="RetroAI 采集"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.RetroAIScaler">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <!-- Foreground Service for Screen Capture, Floating Ball and AI SurfaceView -->
         <service
             android:name=".service.OverlayService"

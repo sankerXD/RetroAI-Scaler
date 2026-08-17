@@ -23,6 +23,7 @@ import android.widget.Toast
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.retroai.scaler.R
+import com.retroai.scaler.capture.DatasetRecorder
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.jni.NativeBridge
 import java.util.concurrent.Executors
@@ -68,6 +69,16 @@ class FloatingBallManager(
      * Ultra load would toast-and-fall-back over the newer selection.
      */
     private val engineGeneration = AtomicInteger(0)
+
+    /**
+     * Corpus capture. Runs on its own thread because the grab blocks waiting
+     * for the render thread to service it, and writing a PNG touches storage.
+     */
+    private val recorder by lazy { DatasetRecorder(context, nativeBridge) }
+    private val captureExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "DatasetCapture").apply { isDaemon = true }
+    }
+    private var isAutoCapturing = false
 
     var profile: RenderProfile = ProfilePreference.load(context)
         private set
@@ -117,16 +128,6 @@ class FloatingBallManager(
     }
 
     /**
-     * Re-seats everything that was measured against the old screen after the
-     * display rotates.
-     *
-     * The measured capture window is dropped rather than transformed: it is a
-     * rect in the previous orientation's pixels, and RetroArch re-lays out its
-     * own viewport on rotation anyway, so the old numbers describe a window
-     * that no longer exists. The service re-runs detection once the game is
-     * back on screen.
-     */
-    /**
      * Switches the layout between "keep the output clear of the capture window"
      * and "lay the output straight over it", once the probe has established
      * which one applies. Drops the measured rect: the capture window is about
@@ -139,6 +140,16 @@ class FloatingBallManager(
         applyRenderProfile()
     }
 
+    /**
+     * Re-seats everything that was measured against the old screen after the
+     * display rotates.
+     *
+     * The measured capture window is dropped rather than transformed: it is a
+     * rect in the previous orientation's pixels, and RetroArch re-lays out its
+     * own viewport on rotation anyway, so the old numbers describe a window
+     * that no longer exists. The service re-runs detection once the game is
+     * back on screen.
+     */
     fun onScreenSizeChanged(newWidth: Int, newHeight: Int) {
         if (newWidth == screenWidth && newHeight == screenHeight) return
         screenWidth = newWidth
@@ -407,11 +418,39 @@ class FloatingBallManager(
                     R.id.chipEngineEspcnFast -> UpscaleEngine.ESPCN_FAST
                     R.id.chipEngineEspcnHq -> UpscaleEngine.ESPCN_HQ
                     R.id.chipEngineEspcnUltra -> UpscaleEngine.ESPCN_ULTRA
+                    R.id.chipEngineRetroAi -> UpscaleEngine.RETROAI
                     else -> profile.engine
                 }
                 applyEngine()
                 applyRenderProfile()
             }
+
+        root.findViewById<Button>(R.id.btnCaptureFrame).setOnClickListener {
+            captureCorpusFrame(skipSimilar = false)
+        }
+
+        root.findViewById<Button>(R.id.btnAutoCapture).apply {
+            updateAutoCaptureText(this)
+            setOnClickListener {
+                isAutoCapturing = !isAutoCapturing
+                updateAutoCaptureText(this)
+                if (isAutoCapturing) {
+                    mainHandler.post(autoCaptureRunnable)
+                    Toast.makeText(
+                        context,
+                        "开始自动采集，每 2 秒一张\n相似画面会自动跳过\n" + recorder.outputPathFor(profile.console),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    mainHandler.removeCallbacks(autoCaptureRunnable)
+                    Toast.makeText(
+                        context,
+                        "已停止，共 ${recorder.countFor(profile.console)} 张",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
 
         root.findViewById<Button>(R.id.btnToggleGuide).apply {
             updateGuideButtonText(this)
@@ -501,6 +540,7 @@ class FloatingBallManager(
         // which keeps changing on the main thread.
         val baseName = profile.modelAssetBaseName()
         val scaleFactor = profile.aiScale.factor
+        val channels = profile.engine.modelChannels
         val engineName = profile.engine.displayName
         val generation = engineGeneration.incrementAndGet()
 
@@ -516,7 +556,7 @@ class FloatingBallManager(
                 val bin = context.assets.open("models/$baseName.bin").use { it.readBytes() }
                 // Ask for the GPU for every network; ncnn falls back to CPU when
                 // there is no Vulkan device.
-                if (nativeBridge.nativeLoadEspcnModel(param, bin, scaleFactor, true)) {
+                if (nativeBridge.nativeLoadEspcnModel(param, bin, scaleFactor, true, channels)) {
                     null
                 } else {
                     "$engineName 加载失败，已回退"
@@ -547,6 +587,39 @@ class FloatingBallManager(
      * dropped. Re-checking re-enters the listener once, which lands on
      * PIXEL_EDGE and unloads - idempotent, and it terminates immediately.
      */
+    private val autoCaptureRunnable = object : Runnable {
+        override fun run() {
+            if (!isAutoCapturing) return
+            captureCorpusFrame(skipSimilar = true)
+            mainHandler.postDelayed(this, 2000L)
+        }
+    }
+
+    /**
+     * Silent while auto-capturing: a Toast every two seconds would cover the
+     * game and drown out the one message that matters, a failure.
+     */
+    private fun captureCorpusFrame(skipSimilar: Boolean) {
+        val console = profile.console
+        captureExecutor.execute {
+            val result = recorder.captureOnce(console, skipSimilar)
+            if (!skipSimilar || !result.saved) {
+                mainHandler.post {
+                    val suffix = if (result.saved) {
+                        "（共 ${recorder.countFor(console)} 张）"
+                    } else {
+                        ""
+                    }
+                    Toast.makeText(context, result.message + suffix, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun updateAutoCaptureText(button: Button) {
+        button.text = if (isAutoCapturing) "停止自动采集" else "开始自动采集"
+    }
+
     private fun updateGuideButtonText(button: Button) {
         button.text = if (profile.showSourceGuide) "隐藏取景框" else "显示取景框"
     }
@@ -560,6 +633,7 @@ class FloatingBallManager(
                 UpscaleEngine.ESPCN_FAST -> R.id.chipEngineEspcnFast
                 UpscaleEngine.ESPCN_HQ -> R.id.chipEngineEspcnHq
                 UpscaleEngine.ESPCN_ULTRA -> R.id.chipEngineEspcnUltra
+                UpscaleEngine.RETROAI -> R.id.chipEngineRetroAi
             }
         )
     }
@@ -605,6 +679,7 @@ class FloatingBallManager(
                 UpscaleEngine.ESPCN_FAST -> R.id.chipEngineEspcnFast
                 UpscaleEngine.ESPCN_HQ -> R.id.chipEngineEspcnHq
                 UpscaleEngine.ESPCN_ULTRA -> R.id.chipEngineEspcnUltra
+                UpscaleEngine.RETROAI -> R.id.chipEngineRetroAi
             }
         )
         root.findViewById<SwitchMaterial>(R.id.switchAiEnable).isChecked = profile.isAiEnabled
@@ -900,6 +975,8 @@ class FloatingBallManager(
         // ncnn::Net construction; the service's own teardown already waits on
         // the pipeline before the renderer goes away.
         engineExecutor.shutdown()
+        isAutoCapturing = false
+        captureExecutor.shutdown()
         mainHandler.removeCallbacksAndMessages(null)
         floatingBallView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }
         edgeTabView?.let { if (it.isAttachedToWindow) windowManager.removeView(it) }

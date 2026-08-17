@@ -89,12 +89,27 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      * mobile GPU; on an older handheld it falls back to CPU and will not keep
      * up, which the UI says out loud rather than silently stuttering.
      */
-    ESPCN_ULTRA("ESPCN Ultra (需高端 GPU)", "ultra");
+    ESPCN_ULTRA("ESPCN Ultra (需高端 GPU)", "ultra"),
+
+    /**
+     * A different aim from the ESPCN family, not just a bigger one. Those
+     * reconstruct the luminance faithfully; this one is trained to REPAINT -
+     * to redraw edges and invent texture - so it rebuilds full RGB and is
+     * meant to look obviously generated rather than merely sharper.
+     *
+     * Residual and RGB, so it needs the three-channel inference path. The
+     * ESPCN models stay: they are far cheaper and remain the right choice on
+     * weaker hardware.
+     */
+    RETROAI("RetroAI（重绘 · 需旗舰 GPU）", "retroai");
 
     val usesNetwork: Boolean get() = assetVariant != null
-    /** Ultra is unusable without GPU inference. */
-    val needsGpu: Boolean get() = this == ESPCN_ULTRA
+    /** Ultra and RetroAI are both unusable without GPU inference. */
+    val needsGpu: Boolean get() = this == ESPCN_ULTRA || this == RETROAI
     val isPixelEdge: Boolean get() = this == PIXEL_EDGE
+
+    /** RetroAI reconstructs colour as well; ESPCN is luminance only. */
+    val modelChannels: Int get() = if (this == RETROAI) 3 else 1
 }
 
 /**
@@ -293,6 +308,9 @@ data class RenderProfile(
     fun modelAssetBaseName(): String? {
         val variant = engine.assetVariant ?: return null
         if (aiScale == AiScale.X1) return null
+        // RetroAI is a separate family with its own naming, not an ESPCN
+        // variant - different channel count, different blob names.
+        if (engine == UpscaleEngine.RETROAI) return "retrosr_${aiScale.factor}x_base"
         return "espcn_y_${aiScale.factor}x_$variant"
     }
 

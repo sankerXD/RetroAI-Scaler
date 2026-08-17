@@ -169,7 +169,16 @@ class RetroArchConfigManager(private val context: Context) {
             "video_viewport_bias_y" to "%.6f".format(biasY),
             // Repack bezels are full-screen input overlays drawn on top of the
             // game - they land inside the capture window and get magnified.
-            "input_overlay_enable" to "false"
+            "input_overlay_enable" to "false",
+            // RetroArch's own CPU filters (LCD grids, scanline softpatches)
+            // rewrite the pixels before we ever see them. Whatever we capture
+            // then is somebody else's interpretation, not the emulator's
+            // output - fatal both for upscaling and for training data.
+            "video_filter" to "",
+            // Bilinear smoothing. Sampling block centres survives it, but only
+            // exactly; anything that shifts the sampling point by half a pixel
+            // starts blending neighbours. Nearest keeps that margin.
+            "video_smooth" to "false"
         )
         if (disableShader) {
             // RetroArch's own shader runs BEFORE we upscale, so the network
