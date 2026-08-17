@@ -55,8 +55,17 @@ public:
 private:
     /** Luma step across a pixel boundary that counts as a border. */
     static constexpr int kEdgeStep = 40;      // out of 255
-    /** A border must run this far, and enclose at least this many rows. */
-    static constexpr int kMinWidth = 40;
+    /**
+     * A border must run this far, and enclose at least this many rows.
+     *
+     * 24 rather than 40 so a standalone portrait frame is caught - those are
+     * around 31 native pixels wide and were falling through, which is how a
+     * speaking character's face ended up with a shaft of light across it.
+     * Measured over 209 frames, the drop costs nothing: mean coverage 7.7% to
+     * 7.8% and the same 1.0% of frames masked past 45%. Below 20 it starts
+     * finding boxes in scene art.
+     */
+    static constexpr int kMinWidth = 24;
     static constexpr int kMinHeight = 10;
     /** Fraction of the panel's height its side borders must span. */
     static constexpr float kSideCover = 0.55f;

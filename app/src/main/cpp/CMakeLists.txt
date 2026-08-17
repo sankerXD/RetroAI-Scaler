@@ -25,6 +25,7 @@ endif()
 set(SOURCE_FILES
     native-lib.cpp
     common/cpu_affinity.cpp
+    common/box_blur.cpp
     capture/hw_buffer_reader.cpp
     capture/frame_cropper.cpp
     ai/espcn_inference.cpp

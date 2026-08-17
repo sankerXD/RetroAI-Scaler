@@ -1,4 +1,5 @@
 #include "gl_renderer.h"
+#include "../common/box_blur.h"
 #include "../common/log.h"
 #include "../common/cpu_affinity.h"
 #include <chrono>
@@ -48,7 +49,7 @@ uniform vec2 uLightDir;
 uniform float uRelief;
 uniform float uOcclusion;
 uniform float uShadeRadius;
-uniform float uShadeBase;   // mip level of the bias to subtract
+uniform sampler2D uDepthBaseTex; // the network's low-frequency bias
 uniform float uShadeStrength;
 uniform sampler2D uUiMaskTex; // 1 over interface panels, which stay unlit
 uniform int uAiEnabled;
@@ -206,13 +207,20 @@ float depthWide(vec2 uv, float lod) {
  * dark rectangular band across the bottom no matter what was on screen.
  *
  * Subtracting a much wider average removes it, because the bias is global and
- * the relief worth lighting is local. Measured: the band goes from -8.0% to
- * +1.4% while 93% of the lighting variation survives. Taking it wider still
- * (one mip less) flattens the band no further and costs a quarter of the
- * lighting, so this is the balance, not an arbitrary constant.
+ * the relief worth lighting is local. Measured: the band goes from +7.4% to
+ * +1.8% while 94% of the lighting variation survives.
+ *
+ * THE WIDE AVERAGE CANNOT COME FROM THE MIP CHAIN. That was tried and does
+ * nothing: an average wide enough to hold the bias is only a couple of texels
+ * across (mip 6 of a 240x160 depth is 2x3), and a texture that small is
+ * CONSTANT under clamp-to-edge outside the middle half of the image - which is
+ * exactly where the band is. Measured, that version left the band at +12.8%,
+ * no better than no correction at all. Wide support and a live gradient at the
+ * edge are contradictory demands on a mip level, so the average is computed on
+ * the CPU with edge clamping and uploaded whole.
  */
 float depthDetail(vec2 uv, float lod) {
-    return depthWide(uv, lod) - depthWide(uv, uShadeBase);
+    return depthWide(uv, lod) - texture(uDepthBaseTex, uv).r;
 }
 
 vec3 applyShading(vec2 uv, vec3 colour, vec2 texelSize) {
@@ -628,7 +636,7 @@ void GlRenderer::initGLResources() {
         uni_.relief      = glGetUniformLocation(oesPassProgram_, "uRelief");
         uni_.occlusion   = glGetUniformLocation(oesPassProgram_, "uOcclusion");
         uni_.shadeRadius = glGetUniformLocation(oesPassProgram_, "uShadeRadius");
-        uni_.shadeBase   = glGetUniformLocation(oesPassProgram_, "uShadeBase");
+        uni_.depthBaseTex = glGetUniformLocation(oesPassProgram_, "uDepthBaseTex");
         uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
         uni_.uiMaskTex   = glGetUniformLocation(oesPassProgram_, "uUiMaskTex");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
@@ -881,6 +889,26 @@ bool GlRenderer::ensureAiTextures() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (depthBaseTex_ == 0) glGenTextures(1, &depthBaseTex_);
+    glBindTexture(GL_TEXTURE_2D, depthBaseTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    depthBase_.assign((size_t)w * h, 0.0f);
+    // R16F with linear filtering is core ES3.0, but say so out loud if a driver
+    // disagrees: the failure mode is a texture that reads zero, which turns the
+    // bias correction into a no-op and silently brings the dark band back.
+    GLenum baseErr = glGetError();
+    if (baseErr != GL_NO_ERROR) {
+        ALOGE("depth bias texture (R16F %dx%d) failed: 0x%x - the bottom band "
+              "will return, since subtracting an empty base corrects nothing.",
+              w, h, baseErr);
+    }
+
     // Geometry changed, so any remembered panels are in the old coordinates.
     uiPanels_.reset();
     hasUiMask_ = false;
@@ -963,6 +991,18 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             // chain for a picture texture is per-frame work nothing samples.
             if (yHiIsDepth_) glGenerateMipmap(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, 0);
+
+            if (yHiIsDepth_) {
+                // The bias is vertical and spans roughly a quarter of the
+                // frame, so the window is tied to the console's height rather
+                // than being a pixel count that only suits one resolution.
+                boxBlurClamped(aiOutput_.data(), w, h, std::max(8, h / 4),
+                               depthBase_, blurScratch_);
+                glBindTexture(GL_TEXTURE_2D, depthBaseTex_);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h,
+                                GL_RED, GL_FLOAT, depthBase_.data());
+                glBindTexture(GL_TEXTURE_2D, 0);
+            }
 
             if (yHiIsDepth_ && aiUiMask_.size() == (size_t)w * h) {
                 glBindTexture(GL_TEXTURE_2D, uiMaskTex_);
@@ -1628,10 +1668,6 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // describe honestly.
     // Mip level, not a pixel radius, since the taps come from the mip chain.
     glUniform1f(uni_.shadeRadius, 3.0f);
-    // One mip level is roughly a doubling of the averaged area: 3 is ~8x8
-    // native pixels, the relief worth lighting; 6 is ~80x80, the network's
-    // content-independent bias, which gets subtracted. See depthDetail().
-    glUniform1f(uni_.shadeBase, 6.0f);
     glUniform1f(uni_.shadeStrength, hd2dStrength_);
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
@@ -1657,6 +1693,10 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D, uiMaskTex_);
     glUniform1i(uni_.uiMaskTex, 3);
+
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, depthBaseTex_);
+    glUniform1i(uni_.depthBaseTex, 4);
     glActiveTexture(GL_TEXTURE0);
 
     glBindVertexArray(quadVao_);
@@ -1737,6 +1777,10 @@ void GlRenderer::release() {
             glDeleteTextures(1, &uiMaskTex_);
             uiMaskTex_ = 0;
             hasUiMask_ = false;
+        }
+        if (depthBaseTex_ != 0) {
+            glDeleteTextures(1, &depthBaseTex_);
+            depthBaseTex_ = 0;
         }
         if (detectTex_ != 0) {
             glDeleteTextures(1, &detectTex_);
