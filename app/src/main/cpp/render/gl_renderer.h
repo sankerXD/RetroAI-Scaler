@@ -319,15 +319,15 @@ private:
     UiPanelFinder uiPanels_{};
     GLuint uiMaskTex_{0};
     /**
-     * The depth's low-frequency component, subtracted before the lighting
-     * takes its gradient. Half float, not 8-bit: quantising it costs 0.43% of
-     * lambert on average and 2.1% at the 99th percentile, and it is a smooth
-     * field, so that error arrives as contour banding across flat areas rather
-     * than as noise. Half float takes it to 0.03%.
+     * The depth's per-row average, subtracted before the lighting takes its
+     * gradient - a horizontal band is a feature constant across x, so this
+     * removes the whole class exactly. One column wide. See depth_profile.h.
+     *
+     * Half float, not 8-bit: it is a smooth field, so quantising it arrives as
+     * contour banding across flat areas rather than as noise.
      */
     GLuint depthBaseTex_{0};
     std::vector<float> depthBase_{};
-    std::vector<float> blurScratch_{};
 
     /** No mask yet means no lighting yet - see the uHd2d gate. */
     bool hasUiMask_{false};

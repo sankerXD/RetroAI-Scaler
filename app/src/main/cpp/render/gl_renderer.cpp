@@ -1,5 +1,5 @@
 #include "gl_renderer.h"
-#include "../common/box_blur.h"
+#include "../common/depth_profile.h"
 #include "../common/log.h"
 #include "../common/cpu_affinity.h"
 #include <chrono>
@@ -195,41 +195,29 @@ float depthWide(vec2 uv, float lod) {
 }
 
 /**
- * Depth with its very-low-frequency component removed.
+ * Depth with each row's own average removed.
  *
- * The network carries a large CONTENT-INDEPENDENT vertical bias: averaged over
- * 139 frames of unrelated games its mean depth is flat at 0.22 for the top two
- * thirds and then ramps to 0.77 by the last row, steepest around rows 110-145.
- * That is the teacher's photographic prior - the bottom of a picture is the
- * ground, so the ground is near - plus a corpus in which the bottom of the
- * frame is usually a dialogue box. It fires on a blank loading screen too.
+ * The network carries a large CONTENT-INDEPENDENT vertical structure: averaged
+ * over 139 frames of unrelated games its mean depth is flat at 0.22 for the top
+ * two thirds and then climbs to 0.77 - and not smoothly, there are kinks around
+ * rows 110-115 and 135-140 running four times the typical slope. Over the
+ * 12-pixel baseline below, each kink produces enough gradient to darken a strip
+ * right across the picture, which is why every GBA game showed the same
+ * horizontal band no matter what was on screen. It fires on a blank loading
+ * screen too.
  *
- * Over the 12-pixel baseline below, that ramp alone contributes a gradient big
- * enough to pin lambert to its lower clamp, which is why every GBA game had a
- * dark rectangular band across the bottom no matter what was on screen.
+ * A HORIZONTAL BAND IS A FEATURE CONSTANT ACROSS X, so subtracting each row's
+ * own mean removes the entire class exactly, while anything that varies along
+ * the row survives untouched. A wide 2D average was tried first and is the
+ * wrong tool: it only removes a smooth global ramp, not the kinks. Measured, it
+ * left the row-to-row brightness slope at 0.0090 against 0.0080 for doing
+ * nothing at all, while the row profile takes it to 0.0031 and the 99th
+ * percentile from 0.099 to 0.022.
  *
- * Subtracting a much wider average removes it, because the bias is global and
- * the relief worth lighting is local. Measured: the band goes from +7.4% to
- * +1.8% while 94% of the lighting variation survives.
- *
- * THE WIDE AVERAGE CANNOT COME FROM THE MIP CHAIN. That was tried and does
- * nothing: an average wide enough to hold the bias is only a couple of texels
- * across (mip 6 of a 240x160 depth is 2x3), and a texture that small is
- * CONSTANT under clamp-to-edge outside the middle half of the image - which is
- * exactly where the band is. Measured, that version left the band at +12.8%,
- * no better than no correction at all. Wide support and a live gradient at the
- * edge are contradictory demands on a mip level, so the average is computed on
- * the CPU with edge clamping and uploaded whole.
+ * Cost: 13% of the lighting variation, since real full-width horizontal relief
+ * goes with it. The "higher is farther" cue is not lost - that is the distance
+ * haze's job, and it reads the absolute depth.
  */
-/**
- * Smooth minimum: identical to min(a, b) away from the knee, continuous in its
- * SLOPE across it. min() is not, and that is enough to draw a line.
- */
-float softMin(float a, float b, float k) {
-    float h = max(k - abs(a - b), 0.0) / k;
-    return min(a, b) - h * h * k * 0.25;
-}
-
 float depthDetail(vec2 uv, float lod) {
     return depthWide(uv, lod) - texture(uDepthBaseTex, uv).r;
 }
@@ -916,13 +904,16 @@ bool GlRenderer::ensureAiTextures() {
 
     if (depthBaseTex_ == 0) glGenTextures(1, &depthBaseTex_);
     glBindTexture(GL_TEXTURE_2D, depthBaseTex_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT, nullptr);
+    // One column: the correction is purely vertical, and saying so in the
+    // texture's shape keeps it from being quietly generalised later. Sampling
+    // is unchanged - any uv.x clamps onto the single column.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, 1, h, 0, GL_RED, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
-    depthBase_.assign((size_t)w * h, 0.0f);
+    depthBase_.assign((size_t)h, 0.0f);
     // R16F with linear filtering is core ES3.0, but say so out loud if a driver
     // disagrees: the failure mode is a texture that reads zero, which turns the
     // bias correction into a no-op and silently brings the dark band back.
@@ -1017,13 +1008,12 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             glBindTexture(GL_TEXTURE_2D, 0);
 
             if (yHiIsDepth_) {
-                // The bias is vertical and spans roughly a quarter of the
-                // frame, so the window is tied to the console's height rather
-                // than being a pixel count that only suits one resolution.
-                boxBlurClamped(aiOutput_.data(), w, h, std::max(8, h / 4),
-                               depthBase_, blurScratch_);
+                // Radius 4 matches the 8x8 average the shading reads the depth
+                // through, so the profile describes the same field the gradient
+                // is taken from.
+                rowDepthProfile(aiOutput_.data(), w, h, 4, depthBase_);
                 glBindTexture(GL_TEXTURE_2D, depthBaseTex_);
-                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h,
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, h,
                                 GL_RED, GL_FLOAT, depthBase_.data());
                 glBindTexture(GL_TEXTURE_2D, 0);
             }
