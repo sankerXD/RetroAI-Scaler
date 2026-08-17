@@ -1686,7 +1686,16 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // Light from the upper left, the direction HD-2D games are almost always
     // lit from - and the one the eye reads as "outdoors, sun".
     glUniform2f(uni_.lightDir, -0.55f, -0.80f);
-    glUniform1f(uni_.relief, 6.0f);
+    // 8.5, not the 6.0 this sat at before the row-mean high-pass. Removing
+    // each row's average takes the vertical relief hardest - a horizontal
+    // feature is exactly what it deletes - and the light is 80% vertical, so
+    // the loss showed far more than the 13% drop in overall variation
+    // suggested. Measured, 8.5 puts the lighting back to 99% of what it was
+    // while the banding stays 2.4x better on mean row-slope and 3.9x better at
+    // the 99th percentile. Amplifying after the subtraction is strictly better
+    // than subtracting less: taking only 85% of the row mean reaches the same
+    // strength but triples the p99 slope, because it leaves part of the band.
+    glUniform1f(uni_.relief, 8.5f);
     // Haze depth and level. Raised together with the cap so the picture keeps
     // the overall brightness that was settled on: the CPU high-pass removed a
     // systematic darkening the old lambert had been contributing by accident,
