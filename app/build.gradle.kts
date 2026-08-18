@@ -114,18 +114,19 @@ val checkShaders = tasks.register<Exec>("checkShaders") {
     commandLine("python3", "${rootProject.projectDir}/tools/check_shaders.py")
 }
 
-// The depth blur the HD-2D lighting reads has to be the same operation the
-// model repository shades with offline, or the offline evaluation is measuring
-// a pipeline that is not the shipped one. That is not hypothetical: section
-// 13.5 records a wide average validated against numpy that turned out to be a
-// different operation on the device and did nothing at all, and the mip read
-// this replaced was invisible offline for the same reason. Skips itself when
-// the model repository is not checked out alongside.
-val checkDepthProfile = tasks.register<Exec>("checkDepthProfile") {
+// The offline HD-2D pipeline in the model repository has to be the same thing
+// the shader ships, or every offline evaluation is measuring a pipeline nobody
+// runs. Both halves of that have already failed once: 13.5 records a wide
+// average validated against numpy that was a different operation on the device
+// and did nothing, 13.11 records the mip read that hid the shimmer for months,
+// and the shading constants had silently drifted to a 10% brightness
+// difference. All three were "kept in step by hand". Skips itself when the
+// model repository is not checked out alongside.
+val checkShadingParity = tasks.register<Exec>("checkShadingParity") {
     group = "verification"
-    description = "Compares boxDepthField against the numpy it is meant to be."
-    commandLine("python3", "${rootProject.projectDir}/tools/check_depth_profile.py")
+    description = "Checks the offline HD-2D pipeline against the shipped shader."
+    commandLine("python3", "${rootProject.projectDir}/tools/check_shading_parity.py")
 }
 
 tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
-    .configureEach { dependsOn(checkShaders, checkDepthProfile) }
+    .configureEach { dependsOn(checkShaders, checkShadingParity) }
