@@ -1003,8 +1003,24 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
                 if (depthHistory_.size() != aiOutput_.size()) {
                     depthHistory_ = aiOutput_;
                 } else {
-                    const float a = kDepthSmoothing;
+                    // The rate is PER PIXEL, not global. A fixed average is
+                    // right for a still picture and wrong the moment anything
+                    // moves: it drags the light along behind the sprite, so a
+                    // character that walked a few pixels wears highlights that
+                    // still belong where it used to be. Averaging is for
+                    // settling the estimator's disagreement with itself, and
+                    // that only happens where the picture is NOT changing.
+                    //
+                    // So where the new depth disagrees with the old by more
+                    // than the estimator's own noise, that disagreement is the
+                    // scene moving - take the new value and do not average it
+                    // against a past that no longer describes this pixel.
                     for (size_t i = 0; i < aiOutput_.size(); ++i) {
+                        const float delta =
+                            std::abs((float)aiOutput_[i] - (float)depthHistory_[i]);
+                        const float motion = std::min(delta / kDepthMotion, 1.0f);
+                        const float a = kDepthSmoothing
+                                        + (1.0f - kDepthSmoothing) * motion;
                         float blended = depthHistory_[i] * (1.0f - a) + aiOutput_[i] * a;
                         depthHistory_[i] = (uint8_t)(blended + 0.5f);
                         aiOutput_[i] = depthHistory_[i];

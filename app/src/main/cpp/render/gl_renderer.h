@@ -191,6 +191,14 @@ private:
      * short enough that the lighting still follows the scene.
      */
     static constexpr float kDepthSmoothing = 0.35f;
+    /**
+     * Depth change, in 8-bit levels, above which a pixel counts as MOVING and
+     * stops being averaged with its past. The estimator's frame-to-frame
+     * disagreement on a still picture is far below this; a sprite arriving or
+     * leaving is far above it. Averaging across that boundary is what left a
+     * walking character lit as though it were still where it had been.
+     */
+    static constexpr float kDepthMotion = 12.0f;
     std::vector<uint8_t> depthHistory_{};
     bool hasGeometry_{false};
     bool paused_{false};
