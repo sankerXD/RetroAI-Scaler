@@ -520,7 +520,10 @@ class FloatingBallManager(
                 true
             }
             setOnClickListener {
-                profile.bloomStrength = if (profile.bloomStrength > 0.001f) 0.0f else 0.5f
+                // 25%, not 50%. Judged on the handheld: at half strength the
+                // highlights spread far enough to read as haze over the picture
+                // rather than as light coming off it.
+                profile.bloomStrength = if (profile.bloomStrength > 0.001f) 0.0f else 0.25f
                 updateBloomText(this)
                 applyRenderProfile()
             }
