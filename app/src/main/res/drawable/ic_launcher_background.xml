@@ -2,11 +2,12 @@
 <!--
   Adaptive icon, background layer: the slate field and the blue disc.
 
-  The disc is 68 across on a 108 canvas, and that number is the whole point.
-  Only the central 72 of the canvas is guaranteed visible - the outer 18 on each
-  side is bleed that every launcher mask crops - so a disc drawn at 80, as this
-  first was, gets its edges cut off by the mask. 68 clears both the circular and
-  the squircle mask with margin to spare.
+  The disc is 58 across on a 108 canvas, and that number is the whole point.
+  Only the central 72 is guaranteed visible - the outer 18 on each side is bleed
+  that every launcher mask crops - so 80, which this started at, had its edges
+  cut off outright. 68 was not clipped but sat hard against the mask edge, which
+  reads as overflow just the same. 58 leaves the slate ring visible all the way
+  round, which is what the design is.
 
   The disc lives here rather than in the foreground because the foreground has a
   tighter budget still; only the white counter and the letter go there.
@@ -23,5 +24,5 @@
 
     <path
         android:fillColor="#6DB3E8"
-        android:pathData="M54,54m-34,0a34,34 0,1 1,68 0a34,34 0,1 1,-68 0" />
+        android:pathData="M54,54m-29,0a29,29 0,1 1,58 0a29,29 0,1 1,-58 0" />
 </vector>

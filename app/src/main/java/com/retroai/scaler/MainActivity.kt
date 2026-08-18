@@ -288,9 +288,10 @@ class MainActivity : AppCompatActivity() {
         val cores = Runtime.getRuntime().availableProcessors()
         // Report what was actually detected - the big cluster is discovered at
         // runtime from cpufreq, not assumed to be a specific SoC.
-        val hwInfo = "SoC: ${android.os.Build.HARDWARE} | CPU Cores: $cores | ABI: $abi\n" +
-                "推理线程自动绑定最高频大核簇，NCNN FP16 / ARM NEON"
-        tvDeviceInfo.text = hwInfo
+        // The second line used to describe thread affinity and the inference
+        // backend. True, and of no use to anyone holding the device: what a
+        // player needs on this screen is the order to do things in.
+        tvDeviceInfo.text = "SoC: ${android.os.Build.HARDWARE} | CPU Cores: $cores | ABI: $abi"
     }
 
     private fun requestStartPipeline() {
