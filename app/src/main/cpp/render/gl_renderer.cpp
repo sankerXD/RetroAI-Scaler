@@ -1823,7 +1823,7 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // computed and the whole pass silently doing nothing.
     bool useNeuralY = false;
     bool depthReady = false;
-    if (hd2dEnabled_) {
+    if (hd2dEnabled_ && isAiEnabled_) {
         depthReady = runEspcnPass(externalTexId, frameWidth, frameHeight);
     } else if (isAiEnabled_ && !pixelEdgeEnabled_) {
         useNeuralY = runEspcnPass(externalTexId, frameWidth, frameHeight);
@@ -1864,7 +1864,8 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // pass lights dialogue boxes and portraits, which is the one artefact it
     // was never acceptable to ship. Waiting a frame for it costs nothing.
     glUniform1i(uni_.hd2d,
-                (depthLoaded && hd2dEnabled_ && depthReady && hasUiMask_) ? 1 : 0);
+                (depthLoaded && hd2dEnabled_ && depthReady && hasUiMask_ && isAiEnabled_)
+                    ? 1 : 0);
     // Light from the upper left, the direction HD-2D games are almost always
     // lit from - and the one the eye reads as "outdoors, sun".
     glUniform2f(uni_.lightDir, -0.55f, -0.80f);
@@ -1899,13 +1900,13 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // The sharp band sits slightly below centre: in a scene viewed from above,
     // the player and the action are usually a little under the middle of the
     // frame, and the top of the frame is the far distance.
-    glUniform1f(uni_.dofStrength, dofStrength_);
+    glUniform1f(uni_.dofStrength, isAiEnabled_ ? dofStrength_ : 0.0f);
     glUniform1f(uni_.dofCentre, 0.56f);
     glUniform1f(uni_.dofBand, 0.20f);
     // Native texels at full defocus. 2.2 was tried and is invisible; at 6 the
     // band reads as a lens rather than as a slightly soft picture.
     glUniform1f(uni_.dofRadius, 6.0f);
-    glUniform1f(uni_.bloomStrength, bloomStrength_);
+    glUniform1f(uni_.bloomStrength, isAiEnabled_ ? bloomStrength_ : 0.0f);
     // Only genuinely bright things bleed. Set this low and the whole picture
     // glows, which reads as fog rather than as light.
     glUniform1f(uni_.bloomThreshold, 0.72f);
@@ -1919,7 +1920,13 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     glUniform1i(uni_.showGuide, showSourceGuide_ ? 1 : 0);
 
     glUniform1i(uni_.useNeuralY, useNeuralY ? 1 : 0);
-    glUniform1i(uni_.pixelEdge, pixelEdgeEnabled_ ? 1 : 0);
+    // Everything the switch turns off, turns off here. uAiEnabled alone only
+    // gated the GPU-sharpen branch, and that branch sits BEHIND the pixel-edge
+    // one in the shader - so with the default engine the master switch was
+    // unreachable and appeared to do nothing at all. With these cleared the
+    // composite falls through to the plain sharp upscale, which is what "off"
+    // should look like: the game, at size, with nothing added.
+    glUniform1i(uni_.pixelEdge, (pixelEdgeEnabled_ && isAiEnabled_) ? 1 : 0);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_EXTERNAL_OES, externalTexId);
