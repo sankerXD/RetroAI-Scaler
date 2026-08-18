@@ -38,6 +38,20 @@ class RetroArchConfigManager(private val context: Context) {
          */
         const val MARKER = "# --- modified by RetroAI-Scaler ---"
 
+        /**
+         * What the marker used to say, before the project name lost its
+         * hyphens. Detection has to accept it or a config written by an older
+         * build is unrecognisable, and "only restore files we marked" quietly
+         * becomes "never restore that file" - leaving someone's RetroArch
+         * permanently configured for our viewport with no way back.
+         *
+         * Only ever recognised, never written.
+         */
+        const val LEGACY_MARKER = "# --- modified by Retro-AI-Scaler ---"
+
+        /** Every marker this tool has ever written. */
+        val MARKERS = listOf(MARKER, LEGACY_MARKER)
+
         private val CONFIG_ROOT_CANDIDATES = listOf(
             "/storage/emulated/0/RetroArch/config",
             "/storage/emulated/0/RetroArch64/config",
@@ -95,7 +109,7 @@ class RetroArchConfigManager(private val context: Context) {
     }
 
     fun hasModifiedFiles(): Boolean =
-        hasAllFilesAccess() && backupManager()?.hasModifiedFiles(MARKER) == true
+        hasAllFilesAccess() && backupManager()?.hasModifiedFiles(MARKERS) == true
 
     fun restoreFromLatestBackup(): RetroArchBackupManager.Result {
         if (!hasAllFilesAccess()) {
@@ -103,7 +117,7 @@ class RetroArchConfigManager(private val context: Context) {
         }
         val manager = backupManager()
             ?: return RetroArchBackupManager.Result(false, "没找到 RetroArch/config 目录")
-        return manager.restoreFromLatest(MARKER)
+        return manager.restoreFromLatest(MARKERS)
     }
 
     fun findConfigRoot(): File? =
@@ -213,7 +227,7 @@ class RetroArchConfigManager(private val context: Context) {
             val original = cfg.readLines()
             val remaining = values.toMutableMap()
             val out = ArrayList<String>(original.size + values.size + 1)
-            if (original.none { it.trim() == MARKER }) {
+            if (original.none { it.trim() in MARKERS }) {
                 out.add(MARKER)
             }
 

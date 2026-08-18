@@ -163,13 +163,13 @@ class RetroArchBackupManager(private val configRoot: File) {
      * marker line), taken from the newest snapshot. The snapshot itself is kept.
      */
     /** True if any config still carries our marker, i.e. a session did not clean up. */
-    fun hasModifiedFiles(marker: String): Boolean =
+    fun hasModifiedFiles(markers: List<String>): Boolean =
         configRoot.walkTopDown().any { f ->
             f.isFile && f.name.endsWith(".cfg", ignoreCase = true) &&
-                    try { f.useLines { l -> l.any { it.trim() == marker } } } catch (e: Exception) { false }
+                    try { f.useLines { l -> l.any { it.trim() in markers } } } catch (e: Exception) { false }
         }
 
-    fun restoreFromLatest(marker: String): Result {
+    fun restoreFromLatest(markers: List<String>): Result {
         val snapshot = latestSnapshot()
             ?: return Result(false, "没有任何备份可用")
         val snapConfig = File(snapshot, "config")
@@ -183,7 +183,7 @@ class RetroArchBackupManager(private val configRoot: File) {
         configRoot.walkTopDown().forEach { live ->
             if (!live.isFile || !live.name.endsWith(".cfg", ignoreCase = true)) return@forEach
             val isOurs = try {
-                live.useLines { lines -> lines.any { it.trim() == marker } }
+                live.useLines { lines -> lines.any { it.trim() in markers } }
             } catch (e: Exception) {
                 false
             }
