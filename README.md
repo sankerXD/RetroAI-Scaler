@@ -11,7 +11,7 @@
 ---
 
 Retro games were drawn for tiny screens. On a modern handheld they get stretched
-to fill a 1280×960 panel and end up soft and smeared. Retro-AI-Scaler captures
+to fill a 1280×960 panel and end up soft and smeared. RetroAI-Scaler captures
 RetroArch's picture at its **original resolution**, rebuilds it, and paints the
 result back over the screen — live, at 60 FPS.
 

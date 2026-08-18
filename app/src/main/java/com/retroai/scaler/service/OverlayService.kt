@@ -939,7 +939,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Retro-AI-Scaler Service",
+                "RetroAI-Scaler Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "RetroArch AI Enhancement Background Service"
@@ -981,7 +981,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Retro-AI-Scaler 运行中")
+            .setContentTitle("RetroAI-Scaler 运行中")
             .setContentText(statusText)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentIntent(pendingIntent)

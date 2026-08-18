@@ -110,7 +110,7 @@ class RetroArchBackupManager(private val configRoot: File) {
         try {
             File(dir, MANIFEST).writeText(
                 buildString {
-                    appendLine("Retro-AI-Scaler 配置备份")
+                    appendLine("RetroAI-Scaler 配置备份")
                     appendLine("时间: ${Date()}")
                     appendLine("原因: $reason")
                     appendLine("来源: ${configRoot.absolutePath}")

@@ -121,7 +121,7 @@ class MainActivity : AppCompatActivity() {
 
         btnGrantUsage.setOnClickListener {
             if (!ForegroundAppMonitor.hasUsageAccess(this)) {
-                Toast.makeText(this, "在列表里找到 Retro-AI-Scaler 并打开开关", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "在列表里找到 RetroAI-Scaler 并打开开关", Toast.LENGTH_LONG).show()
                 startActivity(ForegroundAppMonitor.usageAccessSettingsIntent())
             } else {
                 Toast.makeText(this, "使用情况访问已就绪", Toast.LENGTH_SHORT).show()

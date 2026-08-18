@@ -36,7 +36,7 @@ class RetroArchConfigManager(private val context: Context) {
          * from "this file was never touched" - otherwise a file that cannot be
          * restored is silently skipped and the user is told everything is fine.
          */
-        const val MARKER = "# --- modified by Retro-AI-Scaler ---"
+        const val MARKER = "# --- modified by RetroAI-Scaler ---"
 
         private val CONFIG_ROOT_CANDIDATES = listOf(
             "/storage/emulated/0/RetroArch/config",
