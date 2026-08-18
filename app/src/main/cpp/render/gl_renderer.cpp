@@ -1018,9 +1018,10 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
                     for (size_t i = 0; i < aiOutput_.size(); ++i) {
                         const float delta =
                             std::abs((float)aiOutput_[i] - (float)depthHistory_[i]);
-                        const float motion = std::min(delta / kDepthMotion, 1.0f);
+                        const float motion = std::min(
+                            std::max(delta - kDepthNoise, 0.0f) / kDepthMotion, 1.0f);
                         const float a = kDepthSmoothing
-                                        + (1.0f - kDepthSmoothing) * motion;
+                                        + (kDepthSmoothingMin - kDepthSmoothing) * motion;
                         float blended = depthHistory_[i] * (1.0f - a) + aiOutput_[i] * a;
                         depthHistory_[i] = (uint8_t)(blended + 0.5f);
                         aiOutput_[i] = depthHistory_[i];

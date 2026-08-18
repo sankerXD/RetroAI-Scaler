@@ -192,13 +192,39 @@ private:
      */
     static constexpr float kDepthSmoothing = 0.35f;
     /**
-     * Depth change, in 8-bit levels, above which a pixel counts as MOVING and
-     * stops being averaged with its past. The estimator's frame-to-frame
-     * disagreement on a still picture is far below this; a sprite arriving or
-     * leaving is far above it. Averaging across that boundary is what left a
-     * walking character lit as though it were still where it had been.
+     * How far the averaging is allowed to relax where the scene is moving, and
+     * the window it relaxes over, both in 8-bit depth levels.
+     *
+     * THIS IS A ONE-DIMENSIONAL TRADE AND THERE IS NO WAY AROUND IT. Averaging
+     * less means the light follows a moving sprite instead of trailing it, and
+     * it also means the estimator's own frame-to-frame wobble is no longer
+     * suppressed. Measured over six real 130ms burst sequences from the corpus:
+     *
+     *     ceiling 0.35 (no relaxing)   lag 0.0358   flicker 1.94%
+     *     ceiling 0.55 + dead zone     lag 0.0263   flicker 2.61%
+     *     ceiling 1.00 (full relax)    lag 0.0032   flicker 4.79%
+     *
+     * Both ends were tried on the device and both were noticed - the lag as
+     * highlights sitting where a character used to be, the flicker as shimmer
+     * on anything moving. 0.55 is the middle, not a derived optimum.
+     *
+     * Four other ways out were measured and none worked. Keying the blend on
+     * the PICTURE changing rather than the depth lands on the same curve
+     * (0.0098 / 3.71%). Motion-compensating the history with a global
+     * translation, which section 12.1 suggests, is worse on both axes (0.0365 /
+     * 2.77%) - these are not pure camera pans. And widening the spatial blur
+     * barely moves flicker at all (4.79% -> 4.60% at three times the radius),
+     * which says the wobble is LOW frequency: the whole depth field shifting
+     * slightly, not pixel noise. Only temporal averaging touches that, and
+     * temporal averaging is the lag.
+     *
+     * The dead zone keeps a still pixel fully smoothed: the estimator drifts
+     * about 3 levels frame to frame on unchanged content (section 12.5), so
+     * without it, still pixels were being treated as a quarter "moving".
      */
-    static constexpr float kDepthMotion = 12.0f;
+    static constexpr float kDepthSmoothingMin = 0.55f;
+    static constexpr float kDepthNoise = 5.0f;
+    static constexpr float kDepthMotion = 20.0f;
     std::vector<uint8_t> depthHistory_{};
     bool hasGeometry_{false};
     bool paused_{false};
