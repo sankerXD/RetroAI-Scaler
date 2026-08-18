@@ -83,6 +83,18 @@ configuration is restored on the way out.
 ./gradlew assembleDebug
 ```
 
+## How it works
+
+[AGENT.md](AGENT.md) is the engineering account: why each piece is built the way
+it is, and — mostly — what happens when it is built the other way. Nearly every
+section exists because something was measured and turned out wrong, so the
+failed attempts are written up next to the fixes, with the numbers that decided
+them. Read it before changing anything in the capture geometry, the threading,
+or the HD-2D pass.
+
+The models, their training and the offline pipeline live in
+[RetroAI-Model](https://github.com/sankerXD/RetroAI-Model).
+
 
 ## Credits
 

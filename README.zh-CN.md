@@ -67,12 +67,14 @@ RetroAI-Scaler 以**原始分辨率**捕获 RetroArch 的画面，重建之后�
 > 万一出问题，`adb shell am force-stop com.retroai.scaler` 可以清除，
 > 直接重启设备也行——服务不会自启动。
 
-## 构建
+## 实现说明
 
-```bash
-./setup_toolchain.sh          # Android SDK / NDK / CMake / ncnn
-./gradlew assembleDebug
-```
+[AGENT.md](AGENT.md) 是这个项目的工程记录：每一处为什么这么做，以及——更多时候——
+换个做法会发生什么。几乎每一节的存在都是因为某个东西被实测证明是错的，所以失败的
+尝试和修复写在一起，附带定案的数字。改捕获几何、线程、或 HD-2D 那条通路之前请先读它。
+
+模型本身、训练和离线管线在
+[RetroAI-Model](https://github.com/sankerXD/RetroAI-Model)。
 
 
 ## 致谢
