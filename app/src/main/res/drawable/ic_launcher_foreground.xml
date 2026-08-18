@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive icon, foreground layer: the white counter and the letter. Both sit
+  inside the 66x66 safe zone of the 108x108 tile, so no launcher mask can crop
+  them. The blue disc they sit on is in the background layer, which is not
+  subject to that limit.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,54m-31,0a31,31 0,1 1,62 0a31,31 0,1 1,-62 0" />
+
+    <path
+        android:fillColor="#12161C"
+        android:fillType="evenOdd"
+        android:pathData="M38.36 37.44 H57.68 C64.12 37.44 68.26 41.58 68.26 47.1 C68.26 51.424 65.776 54.828 61.912 56.208 L69.64 70.56 H59.888 L53.448 57.68 H46.64 V70.56 H38.36 ZM46.64 43.88 V52.16 H57.68 C60.072 52.16 61.544 50.688 61.544 48.02 C61.544 45.352 60.072 43.88 57.68 43.88 Z" />
+</vector>

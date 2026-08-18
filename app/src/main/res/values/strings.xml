@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Retro-AI-Scaler</string>
+    <string name="app_name">RetroAI Scaler</string>
     <string name="app_subtitle">RA 模拟器实时 AI 超分外挂层</string>
     <string name="status_service_running">AI 增强引擎运行中</string>
     <string name="status_service_stopped">AI 增强引擎已停止</string>
