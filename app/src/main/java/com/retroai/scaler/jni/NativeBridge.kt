@@ -105,6 +105,9 @@ class NativeBridge {
      */
     external fun nativeSetDof(strength: Float)
 
+    /** Highlight bleed, 0..1. A lens effect like the focus band - no depth. */
+    external fun nativeSetBloom(strength: Float)
+
     external fun nativeRequestFrameCapture()
 
     /** RGBA bytes, top row first, or null if nothing is ready. Fills sizeOut with {w, h}. */

@@ -509,6 +509,23 @@ class FloatingBallManager(
             }
         }
 
+        root.findViewById<Button>(R.id.btnBloom).apply {
+            updateBloomText(this)
+            setOnLongClickListener {
+                val steps = listOf(0.25f, 0.5f, 0.75f, 1.0f)
+                val next = steps.firstOrNull { it > profile.bloomStrength + 0.01f } ?: steps.first()
+                profile.bloomStrength = next
+                updateBloomText(this)
+                applyRenderProfile()
+                true
+            }
+            setOnClickListener {
+                profile.bloomStrength = if (profile.bloomStrength > 0.001f) 0.0f else 0.5f
+                updateBloomText(this)
+                applyRenderProfile()
+            }
+        }
+
         root.findViewById<Button>(R.id.btnToggleGuide).apply {
             updateGuideButtonText(this)
             setOnClickListener {
@@ -729,6 +746,13 @@ class FloatingBallManager(
         } else {
             "开始自动采集"
         }
+    }
+
+    private fun updateBloomText(button: Button) {
+        button.text = if (profile.bloomStrength > 0.001f)
+            "泛光：开　${(profile.bloomStrength * 100).toInt()}%"
+        else
+            "泛光：关（长按调强度）"
     }
 
     private fun updateDofText(button: Button) {
@@ -993,6 +1017,7 @@ class FloatingBallManager(
         nativeBridge.nativeSetMaskType(profile.maskType.id)
         nativeBridge.nativeSetHd2d(profile.hd2dEnabled, profile.hd2dStrength)
         nativeBridge.nativeSetDof(profile.dofStrength)
+        nativeBridge.nativeSetBloom(profile.bloomStrength)
         nativeBridge.nativeSetRenderConfig(
             profile.isAiEnabled,
             profile.console.nativeWidth,

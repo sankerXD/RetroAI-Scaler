@@ -197,6 +197,16 @@ data class RenderProfile(
      * else in this project that would be a bug; here it is the effect.
      */
     var dofStrength: Float = 0.0f,
+    /**
+     * Highlight bleed, 0..1. The other half of the lens pair with the focus
+     * band, and like it, needs no depth.
+     *
+     * Colour grading, the third item on section 12.3's list, is deliberately
+     * absent. Bloom and defocus SIMULATE A LENS and sit on top of any art
+     * direction; grading re-decides the palette, and these games already have
+     * one. It is the only effect on that list that fights the artist.
+     */
+    var bloomStrength: Float = 0.0f,
     /** Disable RetroArch's own shader when writing its config. */
     var disableRaShader: Boolean = true,
     /** Keep the output clear of the capture window. */
@@ -472,6 +482,7 @@ object ProfilePreference {
             hd2dEnabled = p.getBoolean(key(console, "hd2d"), false),
             hd2dStrength = p.getFloat(key(console, "hd2dStrength"), 0.75f),
             dofStrength = p.getFloat(key(console, "dof"), 0.0f),
+            bloomStrength = p.getFloat(key(console, "bloom"), 0.0f),
             disableRaShader = p.getBoolean(key(console, "disableShader"), true),
             avoidSourceOverlap = p.getBoolean(key(console, "avoidOverlap"), true),
             captureMode = lastCaptureMode(context)
@@ -494,6 +505,7 @@ object ProfilePreference {
             .putBoolean(key(c, "hd2d"), profile.hd2dEnabled)
             .putFloat(key(c, "hd2dStrength"), profile.hd2dStrength)
             .putFloat(key(c, "dof"), profile.dofStrength)
+            .putFloat(key(c, "bloom"), profile.bloomStrength)
             .putBoolean(key(c, "disableShader"), profile.disableRaShader)
             .putBoolean(key(c, "avoidOverlap"), profile.avoidSourceOverlap)
             .apply()

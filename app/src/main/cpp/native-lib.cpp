@@ -385,6 +385,18 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeSetDof(
 }
 
 JNIEXPORT void JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeSetBloom(
+    JNIEnv* /* env */,
+    jobject /* this */,
+    jfloat strength
+) {
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    if (gRenderer) {
+        gRenderer->setBloomStrength(strength);
+    }
+}
+
+JNIEXPORT void JNICALL
 Java_com_retroai_scaler_jni_NativeBridge_nativeSetMaskType(
     JNIEnv* /* env */,
     jobject /* this */,

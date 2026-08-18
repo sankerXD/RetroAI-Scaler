@@ -59,6 +59,9 @@ uniform float uDofStrength;   // tilt-shift focus band; 0 = off
 uniform float uDofCentre;     // where the sharp band sits, in output uv.y
 uniform float uDofBand;       // half-height of the fully sharp band
 uniform float uDofRadius;     // blur radius at full defocus, in native texels
+uniform float uBloomStrength; // highlight bleed; 0 = off
+uniform float uBloomThreshold;// luma above which a pixel starts to bleed
+uniform float uBloomRadius;   // how far it bleeds, in native texels
 uniform int uAiEnabled;
 uniform float uScanlineIntensity;
 uniform float uMaskStrength;
@@ -298,6 +301,37 @@ vec3 sourceBokeh(vec2 uv, float radius) {
     return c / 23.0;
 }
 
+/**
+ * Highlight bleed.
+ *
+ * Sampled from the SOURCE for the same reason the focus band is: what bleeds is
+ * the bright parts of the picture, and running edge reconstruction on a tap
+ * that is about to be smeared across forty output pixels buys nothing.
+ *
+ * Twelve taps on two rings. Bloom is the lowest-frequency thing in the whole
+ * pass, so it is the one place where a coarse kernel is not a compromise - the
+ * result is going to be blurred beyond recognition either way.
+ */
+vec3 bloomSample(vec2 uv) {
+    vec2 o = uBloomRadius / uNativeRes;
+    vec2 i = o * 0.45;
+    const float k = 0.70710678;
+    vec3 sum = vec3(0.0);
+    sum += max(sampleSource(uv + vec2( i.x, 0.0)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2(-i.x, 0.0)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2(0.0,  i.y)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2(0.0, -i.y)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2( o.x, 0.0)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2(-o.x, 0.0)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2(0.0,  o.y)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2(0.0, -o.y)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2( o.x * k,  o.y * k)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2(-o.x * k,  o.y * k)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2( o.x * k, -o.y * k)) - uBloomThreshold, 0.0);
+    sum += max(sampleSource(uv + vec2(-o.x * k, -o.y * k)) - uBloomThreshold, 0.0);
+    return sum / 12.0;
+}
+
 vec3 applyShading(vec2 uv, vec3 colour, vec2 texelSize) {
     // LOD 3 is roughly an 8x8 native-pixel average - wide enough that a whole
     // glyph and most of a sprite disappear into it, leaving only the shape of
@@ -480,6 +514,16 @@ void main() {
         }
     }
 
+    // Gathered before the lighting, added after it. Bloom is light scattering
+    // inside a lens, so it does not belong to the scene and should not be
+    // dimmed by the scene's own shading.
+    vec3 bloom = vec3(0.0);
+    // Overlays do not glow. A dialogue box is bright enough to bloom and looks
+    // plainly wrong doing it - it is drawn on the glass, not lit through it.
+    if (uBloomStrength > 0.001) {
+        bloom = bloomSample(uv) * uBloomStrength * (1.0 - overlay);
+    }
+
     // HD-2D: the picture is whatever the chosen upscaler produced, untouched,
     // and the network's only contribution is the depth that lights it. Nothing
     // generative goes near the artist's pixels - which is the entire reason
@@ -487,6 +531,16 @@ void main() {
     if (uHd2d != 0) {
         resultColor = applyShading(uv, resultColor, texelSize);
         resultColor = clamp(resultColor, 0.0, 1.0);
+    }
+
+    // Added in LINEAR light. Bloom is light arriving on top of light, and sRGB
+    // is gamma encoded, so adding in the encoded space brightens midtones far
+    // more than the same amount of light physically would - the same reason the
+    // masks below decode first.
+    if (uBloomStrength > 0.001) {
+        vec3 lin = pow(max(resultColor, vec3(0.0)), vec3(2.2));
+        lin += pow(max(bloom, vec3(0.0)), vec3(2.2));
+        resultColor = pow(max(lin, vec3(0.0)), vec3(1.0 / 2.2));
     }
 
     // ---------------------------------------------------------------
@@ -754,6 +808,9 @@ void GlRenderer::initGLResources() {
         uni_.dofCentre   = glGetUniformLocation(oesPassProgram_, "uDofCentre");
         uni_.dofBand     = glGetUniformLocation(oesPassProgram_, "uDofBand");
         uni_.dofRadius   = glGetUniformLocation(oesPassProgram_, "uDofRadius");
+        uni_.bloomStrength = glGetUniformLocation(oesPassProgram_, "uBloomStrength");
+        uni_.bloomThreshold = glGetUniformLocation(oesPassProgram_, "uBloomThreshold");
+        uni_.bloomRadius = glGetUniformLocation(oesPassProgram_, "uBloomRadius");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
         uni_.scanline    = glGetUniformLocation(oesPassProgram_, "uScanlineIntensity");
         uni_.lcdGrid     = glGetUniformLocation(oesPassProgram_, "uMaskStrength");
@@ -1837,6 +1894,13 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // Native texels at full defocus. 2.2 was tried and is invisible; at 6 the
     // band reads as a lens rather than as a slightly soft picture.
     glUniform1f(uni_.dofRadius, 6.0f);
+    glUniform1f(uni_.bloomStrength, bloomStrength_);
+    // Only genuinely bright things bleed. Set this low and the whole picture
+    // glows, which reads as fog rather than as light.
+    glUniform1f(uni_.bloomThreshold, 0.72f);
+    // Wider than the focus band's, because bloom is the lowest-frequency thing
+    // here - at 10 native texels it is 60 output pixels across.
+    glUniform1f(uni_.bloomRadius, 10.0f);
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
     glUniform1f(uni_.lcdGrid, lcdGridIntensity_);
