@@ -186,7 +186,19 @@ enum class AiScale(val factor: Int, val label: String) {
     X1(1, "1x"),
     X2(2, "2x"),
     X3(3, "3x"),
-    X4(4, "4x")
+    X4(4, "4x"),
+
+    /**
+     * Matches the output geometry on a 1080p handheld running GBA: the picture
+     * is drawn at the largest integer multiple of 240x160 that fits, which is
+     * 6x. Below that the network reconstructs less than the screen shows and
+     * the result is upscaled again; above it, the extra detail is computed and
+     * then thrown away.
+     *
+     * Needs espcn_y_6x_{fast,hq,ultra}; the depth net is unaffected, since it
+     * maps native resolution to itself and has no factor at all.
+     */
+    X6(6, "6x")
 }
 
 data class RenderProfile(

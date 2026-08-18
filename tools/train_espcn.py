@@ -38,7 +38,11 @@ SUPER = 12  # supersampling factor used to render ground truth scenes
 
 # Scales to train. The app picks one at runtime ("AI 增强倍率"), independently
 # of how big the picture is drawn on screen.
-SCALES = (2, 3, 4)
+# 6 is here because it is what the handheld actually draws: 240x160 at the
+# largest integer multiple that fits 1920x1080 is 6x. Reconstructing below that
+# means the result gets upscaled again; above it, the detail is computed and
+# then discarded on the way down.
+SCALES = (2, 3, 4, 6)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET_DIR = os.path.join(REPO_ROOT, "app", "src", "main", "assets", "models")

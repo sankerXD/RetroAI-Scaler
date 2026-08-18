@@ -397,6 +397,7 @@ class FloatingBallManager(
                     R.id.chipScale2x -> AiScale.X2
                     R.id.chipScale3x -> AiScale.X3
                     R.id.chipScale4x -> AiScale.X4
+                    R.id.chipScale6x -> AiScale.X6
                     else -> profile.aiScale
                 }
                 applyEngine()
@@ -419,6 +420,7 @@ class FloatingBallManager(
                     R.id.chipScale2x -> AiScale.X2
                     R.id.chipScale3x -> AiScale.X3
                     R.id.chipScale4x -> AiScale.X4
+                    R.id.chipScale6x -> AiScale.X6
                     else -> profile.aiScale
                 }
                 applyEngine()
@@ -733,6 +735,7 @@ class FloatingBallManager(
                 AiScale.X2 -> R.id.chipScale2x
                 AiScale.X3 -> R.id.chipScale3x
                 AiScale.X4 -> R.id.chipScale4x
+                AiScale.X6 -> R.id.chipScale6x
             }
         )
         root.findViewById<ChipGroup>(R.id.chipGroupMask).check(
@@ -749,6 +752,7 @@ class FloatingBallManager(
                 AiScale.X2 -> R.id.chipScale2x
                 AiScale.X3 -> R.id.chipScale3x
                 AiScale.X4 -> R.id.chipScale4x
+                AiScale.X6 -> R.id.chipScale6x
             }
         )
         root.findViewById<ChipGroup>(R.id.chipGroupEngine).check(
