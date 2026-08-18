@@ -64,6 +64,22 @@ ScrollEstimate estimateScroll(const uint8_t* prev, const uint8_t* cur,
         return out;
     }
 
+    // How much the frame changes when it DOES move one texel. Without this
+    // reference, "still with a flower animating" and "cannot be read" score
+    // the same zero: the best vector is (0,0) in both cases, so
+    // 1 - best/none is 1 - 1 = 0 even though the first answer is exactly
+    // right. Measured on the device standing still, the confidence flipped
+    // between 1.00 and 0.00 depending on whether a sprite happened to be
+    // mid-animation.
+    const long perTexel = sadAt(cur, cur, width, height, channels, 0, 1,
+                                std::numeric_limits<long>::max());
+    if (perTexel > 0 && none * 10 < perTexel) {
+        // Far less change than a single texel of movement would cause, so
+        // whatever moved, the scene did not.
+        out.confidence = 1.0f;
+        return out;
+    }
+
     long best = none;
     int bestX = 0, bestY = 0;
 

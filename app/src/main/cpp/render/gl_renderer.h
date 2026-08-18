@@ -296,6 +296,9 @@ private:
     static constexpr float kScrollBlend = 0.5f;
     /** Unreadable for this long and the velocity starts decaying toward zero. */
     static constexpr float kScrollHoldMs = 120.0f;
+    /** Diagnostic accumulators for the applied-shift trace. */
+    float shiftMin_{1e9f}, shiftMax_{-1e9f}, shiftSum_{0.0f}, shiftAge_{0.0f};
+    int shiftN_{0};
     bool hasGeometry_{false};
     bool paused_{false};
     bool pausedFrameDrawn_{false};
