@@ -15,13 +15,13 @@ to fill a 1280×960 panel and end up soft and smeared. RetroAI-Scaler captures
 RetroArch's picture at its **original resolution**, rebuilds it, and paints the
 result back over the screen — live, at 60 FPS.
 
-![Pixel-edge, HD-2D and ESPCN compared](pictures/comparison.png)
+![Untouched, HD-2D and ESPCN compared](pictures/comparison.png)
 
-The same frame through three engines, captured on the handheld at 60 FPS. The
-bottom row is where it shows: **Pixel-edge** rebuilds the diagonals the artist
-drew and leaves everything else alone, **HD-2D** relights the scene from an
-estimated depth map without touching a single one of those pixels, and
-**ESPCN 6x** reconstructs luminance at exactly the factor the screen draws.
+One frame, captured on the handheld at 60 FPS. The bottom row is where it
+shows: untouched, the picture is a bilinear smear. **HD-2D** rebuilds the
+diagonals the artist drew and then relights the scene from an estimated depth
+map, without altering a single one of those pixels. **ESPCN 6x** reconstructs
+luminance at exactly the factor the screen draws.
 
 ## Features
 

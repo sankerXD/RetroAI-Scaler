@@ -33,11 +33,12 @@ ALL_PANELS = {
 # so a four-column strip arrives at roughly 220 px per panel and nothing in it
 # can be read without clicking through. Three is about 290.
 #
-# Which three is a real choice. Dropping "original" loses the before, and three
+# Which three is a real choice, and it was made the other way first. Three
 # processed engines side by side look much alike to anyone who has not used
-# them; dropping "pixel-edge" instead keeps the baseline and costs little,
-# since HD-2D IS pixel-edge with the lighting on top.
-SHOW = ["pixel-edge", "hd2d", "espcn"]
+# them - built without "original", only HD-2D stood out, and nothing in the
+# strip said what the app does. "pixel-edge" is the one that can go, because
+# HD-2D IS pixel-edge with the lighting on top, so it is still on screen.
+SHOW = ["original", "hd2d", "espcn"]
 PANELS = [ALL_PANELS[k] for k in SHOW]
 
 COL_W = 600                               # width of one column
