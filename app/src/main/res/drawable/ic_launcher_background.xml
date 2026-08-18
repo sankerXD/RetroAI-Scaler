@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Adaptive icon, background layer. The slate field and the blue disc both live
-  here rather than in the foreground: the launcher masks the composite, and a
-  disc this close to the edge would be clipped by the safe zone if it were
-  foreground content. Only the white counter and the letter sit in the
-  foreground, where they stay well inside it.
+  Adaptive icon, background layer: the slate field and the blue disc.
+
+  The disc is 68 across on a 108 canvas, and that number is the whole point.
+  Only the central 72 of the canvas is guaranteed visible - the outer 18 on each
+  side is bleed that every launcher mask crops - so a disc drawn at 80, as this
+  first was, gets its edges cut off by the mask. 68 clears both the circular and
+  the squircle mask with margin to spare.
+
+  The disc lives here rather than in the foreground because the foreground has a
+  tighter budget still; only the white counter and the letter go there.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -18,5 +23,5 @@
 
     <path
         android:fillColor="#6DB3E8"
-        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0" />
+        android:pathData="M54,54m-34,0a34,34 0,1 1,68 0a34,34 0,1 1,-68 0" />
 </vector>
