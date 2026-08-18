@@ -439,6 +439,7 @@ class FloatingBallManager(
                     else -> profile.engine
                 }
                 applyEnginePreset()
+                syncScaleChipsEnabled(root)
                 applyEngine()
                 applyRenderProfile()
             }
@@ -527,6 +528,24 @@ class FloatingBallManager(
      * other engine clears all three, so choosing one can never leave a stray
      * effect running from a previous choice.
      */
+    /**
+     * The reconstruction factor sizes the NETWORK's output, so it means nothing
+     * to an engine that has no network - the shader paths sample the capture
+     * directly and are drawn at whatever integer multiple the screen allows.
+     * The chips used to stay live and simply do nothing, which reads as a bug
+     * because it is indistinguishable from one.
+     */
+    private fun syncScaleChipsEnabled(root: View) {
+        val usable = profile.engine.usesNetwork
+        val group = root.findViewById<ChipGroup>(R.id.chipGroupScale)
+        for (i in 0 until group.childCount) {
+            group.getChildAt(i).apply {
+                isEnabled = usable
+                alpha = if (usable) 1.0f else 0.4f
+            }
+        }
+    }
+
     private fun applyEnginePreset() {
         profile.hd2dEnabled = profile.engine.hd2dStrength > 0f
         profile.hd2dStrength = profile.engine.hd2dStrength
@@ -745,6 +764,7 @@ class FloatingBallManager(
             }
         )
         root.findViewById<SwitchMaterial>(R.id.switchAiEnable).isChecked = profile.isAiEnabled
+        syncScaleChipsEnabled(root)
         root.findViewById<SeekBar>(R.id.seekbarScanline).progress =
             (profile.scanlineIntensity * 100).toInt()
         root.findViewById<SeekBar>(R.id.seekbarLcdGrid).progress =
