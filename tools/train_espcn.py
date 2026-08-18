@@ -277,16 +277,23 @@ def main():
     ap.add_argument("--samples", type=int, default=6000)
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--only", type=str, default=None, help="train just one variant")
+    ap.add_argument("--scales", type=int, nargs="+", default=list(SCALES),
+                    metavar="N",
+                    help="which factors to train; defaults to all of "
+                         + " ".join(str(x) for x in SCALES)
+                         + ". Adding one factor does not require redoing the "
+                           "others - each is its own model.")
     args = ap.parse_args()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    scales = [s for s in args.scales if s in SCALES] or list(SCALES)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"device: {device}")
 
-    for scale in SCALES:
+    for scale in scales:
         print(f"\n########## scale {scale}x ##########")
         print(f"generating {args.samples} synthetic LR/HR pairs...")
         lr_data, hr_data = build_dataset(args.samples, scale)
