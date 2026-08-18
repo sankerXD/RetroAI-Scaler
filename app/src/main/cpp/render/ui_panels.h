@@ -41,7 +41,12 @@ class UiPanelFinder {
 public:
     /**
      * @param rgb   interleaved RGB8, width*height*3, top row first.
-     * @param out   width*height mask, 255 where lighting must be skipped.
+     * @param out   width*height*2, interleaved. Channel 0 is the panel mask,
+     *              which the lighting and the focus band both honour. Channel 1
+     *              is content that stays PUT while the scene scrolls - a HUD
+     *              with no box around it - and only the focus band honours
+     *              that one, because a mistake there costs a sharp patch rather
+     *              than a hole in the lighting.
      *
      * The mask is feathered so its boundary cannot become an outline of its
      * own, and averaged with the previous call so a panel appearing or
@@ -50,7 +55,7 @@ public:
     void detect(const uint8_t* rgb, int width, int height, std::vector<uint8_t>& out);
 
     /** Forget the temporal history - call when the geometry changes. */
-    void reset() { history_.clear(); }
+    void reset() { history_.clear(); prevLuma_.clear(); staticAcc_.clear(); }
 
 private:
     /** Luma step across a pixel boundary that counts as a border. */
@@ -90,14 +95,50 @@ private:
     /** Weight of the newest detection in the temporal average. */
     static constexpr float kBlend = 0.34f;
 
+    /**
+     * Screen-locked overlay detection, for HUD that has no border to find.
+     *
+     * A HUD is defined by staying put while the scene moves, so it is only
+     * measurable WHILE the scene moves - which is why the accumulator is frozen
+     * unless the frame is genuinely scrolling. Without that gate a player
+     * standing still makes the whole screen look like a HUD within a second.
+     *
+     * "Scrolling" is judged by how far the change is SPREAD, not by how much of
+     * it there is: a camera pan changes nearly every cell of the frame, whereas
+     * a few large sprites animating in place change a lot of pixels but only
+     * where they are. Measured on the corpus, the pixel-count test alone marked
+     * 31-34% of a static-camera scene as overlay; the spread test takes those
+     * to zero while keeping the real detections.
+     *
+     * KNOWN LIMIT: a zero-parallax background layer is screen-locked too, and
+     * by this definition it IS an overlay. Requiring hard edges removes the
+     * flat-sky case (24% of that frame down to 9%) but a detailed far layer
+     * still reads as HUD. This is why channel 1 drives only the focus band.
+     */
+    static constexpr int kChangeLevel = 8;     // luma levels that count as a change
+    static constexpr int kGridY = 4, kGridX = 6;
+    static constexpr float kCellMoving = 0.20f;   // of a cell, to call it moving
+    static constexpr float kFrameMoving = 0.80f;  // of the cells, to open the gate
+    static constexpr float kStaticRise = 0.10f;
+    static constexpr float kStaticFall = 0.50f;
+    static constexpr int kDetailLevel = 9;        // edge strength of a graphic
+    static constexpr float kDetailCover = 0.12f;  // of a neighbourhood, to keep it
+
     struct Run { int pos, from, to; };
 
     /** 5x5 box blur, separable. Softens the mask boundary. */
     void blur(const std::vector<uint8_t>& src, int width, int height,
               std::vector<uint8_t>& dst) const;
 
+    /** Accumulates what stays put while the scene scrolls. */
+    void updateStatic(int width, int height);
+
     std::vector<uint8_t> luma_{};
+    std::vector<uint8_t> prevLuma_{};
+    std::vector<float> staticAcc_{};
+    std::vector<uint8_t> detail_{};
     std::vector<uint8_t> raw_{};
+    std::vector<uint8_t> feathered_{};
     std::vector<uint8_t> history_{};
     std::vector<Run> horiz_{};
     std::vector<Run> vert_{};

@@ -469,7 +469,12 @@ void main() {
         // boundary cannot become an outline, but a half-defocused dialogue box
         // does not read as soft - it reads as glass. Anything meaningfully
         // inside a panel stays fully sharp.
-        dof *= 1.0 - smoothstep(0.08, 0.35, texture(uUiMaskTex, uv).r);
+        // Both channels: a bordered panel, or anything that holds still while
+        // the scene scrolls past it. Decisive rather than proportional - the
+        // feathering exists so the LIGHTING boundary cannot become an outline,
+        // but a half-defocused HUD does not read as soft, it reads as glass.
+        vec2 overlay = texture(uUiMaskTex, uv).rg;
+        dof *= 1.0 - smoothstep(0.08, 0.35, max(overlay.r, overlay.g));
         if (dof > 0.002) {
             resultColor = mix(resultColor, sourceBokeh(uv, dof * uDofRadius), dof);
         }
@@ -987,13 +992,19 @@ bool GlRenderer::ensureAiTextures() {
     if (yHiIsDepth_) glGenerateMipmap(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    // Interface-panel mask, native resolution, one channel. Linear so the
-    // feathered boundary stays a gradient rather than a staircase - the point
-    // of the mask is to stop the pass drawing outlines, so it must not draw one
-    // of its own.
+    // Overlay mask, native resolution, TWO channels. Red is the bordered-panel
+    // mask, which the lighting and the focus band both honour. Green is content
+    // that stays put while the scene scrolls - a HUD with no box drawn round it
+    // - and only the focus band honours that, because its known failure is a
+    // zero-parallax background layer, and losing the blur there is a far
+    // cheaper mistake than punching a hole in the lighting.
+    //
+    // Linear filtering so the feathered boundary stays a gradient rather than a
+    // staircase: the mask exists to stop the pass drawing outlines, so it must
+    // not draw one of its own.
     if (uiMaskTex_ == 0) glGenTextures(1, &uiMaskTex_);
     glBindTexture(GL_TEXTURE_2D, uiMaskTex_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, w, h, 0, GL_RG, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1133,10 +1144,10 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
                 glBindTexture(GL_TEXTURE_2D, 0);
             }
 
-            if (yHiIsDepth_ && aiUiMask_.size() == (size_t)w * h) {
+            if (yHiIsDepth_ && aiUiMask_.size() == (size_t)w * h * 2) {
                 glBindTexture(GL_TEXTURE_2D, uiMaskTex_);
                 glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h,
-                                GL_RED, GL_UNSIGNED_BYTE, aiUiMask_.data());
+                                GL_RG, GL_UNSIGNED_BYTE, aiUiMask_.data());
                 glBindTexture(GL_TEXTURE_2D, 0);
                 hasUiMask_ = true;
             }
