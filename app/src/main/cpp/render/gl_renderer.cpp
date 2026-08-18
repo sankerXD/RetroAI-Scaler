@@ -506,23 +506,21 @@ void main() {
         resultColor = sampleSourceSharp(uv);
     }
 
+    // Both channels: a bordered panel, or anything that holds still while the
+    // scene scrolls past it. Read ONCE, outside both effects, because the focus
+    // band and the bloom both need it. Decisive rather than proportional - the
+    // feathering exists so the LIGHTING boundary cannot become an outline, but
+    // a half-defocused HUD does not read as soft, it reads as glass.
+    vec2 overlayRG = texture(uUiMaskTex, uv).rg;
+    float overlay = smoothstep(0.08, 0.35, max(overlayRG.r, overlayRG.g));
+
     // Tilt-shift, before the lighting rather than after: the lighting is a
     // slowly varying multiplier, so the order barely changes the result, and
     // doing it here means the blurred taps are of the SOURCE - no second pass,
     // and the edge reconstruction is skipped exactly where it would be thrown
-    // away. Panels stay sharp via the same mask that keeps the light off them.
+    // away.
     if (uDofStrength > 0.001) {
-        float dof = dofAmount(uv) * uDofStrength;
-        // Decisive, not proportional. The mask is feathered so the LIGHTING
-        // boundary cannot become an outline, but a half-defocused dialogue box
-        // does not read as soft - it reads as glass. Anything meaningfully
-        // inside a panel stays fully sharp.
-        // Both channels: a bordered panel, or anything that holds still while
-        // the scene scrolls past it. Decisive rather than proportional - the
-        // feathering exists so the LIGHTING boundary cannot become an outline,
-        // but a half-defocused HUD does not read as soft, it reads as glass.
-        vec2 overlay = texture(uUiMaskTex, uv).rg;
-        dof *= 1.0 - smoothstep(0.08, 0.35, max(overlay.r, overlay.g));
+        float dof = dofAmount(uv) * uDofStrength * (1.0 - overlay);
         if (dof > 0.002) {
             resultColor = mix(resultColor, sourceBokeh(uv, dof * uDofRadius), dof);
         }
