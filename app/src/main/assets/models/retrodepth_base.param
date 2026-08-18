@@ -1,7 +1,7 @@
 7767517
-27 33
+26 32
 Input            input                0 1 input
-Convolution      head                 1 1 input head_1 0=32 1=3 2=1 3=2 4=1 5=1 6=864
+Convolution      head                 1 1 input head_1 0=32 1=3 2=1 3=1 4=1 5=1 6=864
 Split            head_split           1 2 head_1 head_split_t0_2 head_split_t1_3
 Split            blk0_split           1 2 head_split_t0_2 blk0_split_t0_4 blk0_split_t1_5
 Convolution      blk0_conv1           1 1 blk0_split_t1_5 blk0_conv1_6 0=32 1=3 2=1 3=1 4=1 5=1 6=9216 9=2 -23310=1,0.1
@@ -25,5 +25,4 @@ Convolution      blk4_conv2           1 1 blk4_conv1_26 blk4_conv2_27 0=32 1=3 2
 Eltwise          blk4_add             2 1 blk4_conv2_27 blk4_split_t0_24 blk4_add_28 0=1
 Convolution      body_join            1 1 blk4_add_28 body_join_29 0=32 1=3 2=1 3=1 4=1 5=1 6=9216
 Eltwise          body_add             2 1 body_join_29 head_split_t1_3 body_add_30 0=1
-Convolution      tail                 1 1 body_add_30 tail_31 0=4 1=3 2=1 3=1 4=1 5=1 6=1152
-PixelShuffle     shuffle              1 1 tail_31 output 0=2
+Convolution      tail                 1 1 body_add_30 output 0=1 1=3 2=1 3=1 4=1 5=1 6=288

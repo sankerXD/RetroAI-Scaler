@@ -121,6 +121,7 @@ public:
     void setDofStrength(float strength) { dofStrength_ = strength; }
     void setBloomStrength(float strength) { bloomStrength_ = strength; }
 
+
     /**
      * Drops the network; rendering falls back to the shader path.
      *
@@ -193,45 +194,54 @@ private:
     /** Highlight bleed. A lens effect like the focus band - no depth needed. */
     float bloomStrength_{0.0f};
     /**
-     * Previous depth map, for the temporal average. 0.35 keeps roughly three
-     * inference frames in flight: enough to settle the estimator's flicker,
-     * short enough that the lighting still follows the scene.
+     * How much of each new depth estimate is taken. 1 would be no averaging.
+     *
+     * THIS NUMBER NOW MEANS SOMETHING ELSE THAN IT USED TO, and reading it as
+     * the old one is how it would get mis-tuned again.
+     *
+     * It used to sit in a trade documented here as one-dimensional and
+     * unavoidable: average less and the estimator's wobble shows, average more
+     * and the light trails a moving sprite, six burst sequences pricing 0.35 at
+     * lag 0.0358 / flicker 1.94% against 1.00 at lag 0.0032 / flicker 4.79%,
+     * plus four measured attempts to escape it that all failed.
+     *
+     * They failed for one reason. The wobble was not the estimator disagreeing
+     * with itself - it was SHIFT-VARIANCE, a strided head and a PixelShuffle
+     * tail making the depth a function of which lattice the content landed on,
+     * with an anchored mip read in the shading doing the same at a period of
+     * eight. A deterministic oscillation cannot be filtered out of a signal:
+     * averaging trades its amplitude for lag at exactly one rate, which is the
+     * straight line all four experiments kept landing on. There was never a
+     * second dimension to search. Both sources are fixed at source now (down=1,
+     * and boxDepthField in place of the mip).
+     *
+     * So the averaging is no longer suppressing estimator noise. Measured on 33
+     * burst sequences, camera-still pairs only, the noise it would have to
+     * suppress fell from 0.01457 to 0.00618, and switching the blend off
+     * entirely shimmers LESS than the old network did at the old 0.35. What is
+     * left for it to do is a different and legitimate job: two-frame sprite
+     * animations - flowers swaying, torches - genuinely change the depth, the
+     * network is RIGHT to follow them, and without any blend the lighting
+     * visibly snaps between the two states.
+     *
+     * 0.55 was settled on the device against that, walking down from no
+     * averaging until the snapping stopped reading. It is the largest rate that
+     * achieves it, which is the right end to pick from: the measured shimmer is
+     * nearly flat from 0.35 to 0.55 (0.00491 to 0.00567, indistinguishable by
+     * eye and confirmed so on the handheld) while the lag it adds doubles
+     * across that range, 16 ms against 37 ms.
+     *
+     * The adaptive per-pixel rate is gone. It keyed on |new - old|, the very
+     * quantity it was denoising, so it could never separate the estimator's
+     * wobble from the scene moving - and now that the network is equivariant,
+     * that difference is real signal every time.
+     *
+     * NOT the whole of the lag on screen, and tuning this to chase the rest
+     * will not work: the picture is the live capture and the depth is whatever
+     * inference last finished, so the two are 20-40 ms apart no matter what
+     * this is set to. See section 7.
      */
-    static constexpr float kDepthSmoothing = 0.35f;
-    /**
-     * How far the averaging is allowed to relax where the scene is moving, and
-     * the window it relaxes over, both in 8-bit depth levels.
-     *
-     * THIS IS A ONE-DIMENSIONAL TRADE AND THERE IS NO WAY AROUND IT. Averaging
-     * less means the light follows a moving sprite instead of trailing it, and
-     * it also means the estimator's own frame-to-frame wobble is no longer
-     * suppressed. Measured over six real 130ms burst sequences from the corpus:
-     *
-     *     ceiling 0.35 (no relaxing)   lag 0.0358   flicker 1.94%
-     *     ceiling 0.55 + dead zone     lag 0.0263   flicker 2.61%
-     *     ceiling 1.00 (full relax)    lag 0.0032   flicker 4.79%
-     *
-     * Both ends were tried on the device and both were noticed - the lag as
-     * highlights sitting where a character used to be, the flicker as shimmer
-     * on anything moving. 0.55 is the middle, not a derived optimum.
-     *
-     * Four other ways out were measured and none worked. Keying the blend on
-     * the PICTURE changing rather than the depth lands on the same curve
-     * (0.0098 / 3.71%). Motion-compensating the history with a global
-     * translation, which section 12.1 suggests, is worse on both axes (0.0365 /
-     * 2.77%) - these are not pure camera pans. And widening the spatial blur
-     * barely moves flicker at all (4.79% -> 4.60% at three times the radius),
-     * which says the wobble is LOW frequency: the whole depth field shifting
-     * slightly, not pixel noise. Only temporal averaging touches that, and
-     * temporal averaging is the lag.
-     *
-     * The dead zone keeps a still pixel fully smoothed: the estimator drifts
-     * about 3 levels frame to frame on unchanged content (section 12.5), so
-     * without it, still pixels were being treated as a quarter "moving".
-     */
-    static constexpr float kDepthSmoothingMin = 0.55f;
-    static constexpr float kDepthNoise = 5.0f;
-    static constexpr float kDepthMotion = 20.0f;
+    static constexpr float kDepthSmoothing = 0.55f;
     std::vector<uint8_t> depthHistory_{};
     bool hasGeometry_{false};
     bool paused_{false};
@@ -369,6 +379,18 @@ private:
      */
     GLuint depthBaseTex_{0};
     std::vector<float> depthBase_{};
+    /**
+     * The blurred depth the lighting takes its gradient from, native
+     * resolution, computed on the inference worker.
+     *
+     * Replaces a textureLod() read of the depth's mip chain. Mip level 3 is an
+     * 8x8 average on a grid anchored to the texture, so it does not translate
+     * with the picture - measured as a period-8 wobble reaching 0.019 of the
+     * shading range per pixel of scroll, against 0.00006 for this. See
+     * boxDepthField in common/depth_profile.h for the full account.
+     */
+    GLuint depthWideTex_{0};
+    std::vector<float> depthWide_{};
 
     /** No mask yet means no lighting yet - see the uHd2d gate. */
     bool hasUiMask_{false};
@@ -392,6 +414,7 @@ private:
         GLint hazeKnee{-1};
         GLint shadeRadius{-1};
         GLint depthBaseTex{-1};
+        GLint depthWideTex{-1};
         GLint depthBias{-1};
         GLint shadeStrength{-1};
         GLint uiMaskTex{-1};

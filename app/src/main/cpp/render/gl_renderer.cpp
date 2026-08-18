@@ -52,6 +52,7 @@ uniform float uHazeCap;
 uniform float uHazeKnee;
 uniform float uShadeRadius;
 uniform sampler2D uDepthBaseTex; // the network's per-row bias
+uniform sampler2D uDepthWideTex; // depth through a sliding box, native res
 uniform float uDepthBias;        // how much of it to subtract; 0 = off
 uniform float uShadeStrength;
 uniform sampler2D uUiMaskTex; // 1 over interface panels, which stay unlit
@@ -197,9 +198,23 @@ vec3 pixelEdgeUpscale(vec2 uv) {
  * carry cast shadows, and asking it to is what produced the blotches.
  */
 float depthWide(vec2 uv, float lod) {
-    // A real box average from the mip chain, not a ring of point samples.
-    // Smooth and continuous as things move across it, which the ring was not.
-    return textureLod(uYHiTex, uv, lod).r;
+    // A SLIDING box average, computed at native resolution on the worker and
+    // uploaded whole - not a mip read.
+    //
+    // This was textureLod(uYHiTex, uv, 3.0). Mip level 3 is an 8x8 average on a
+    // grid anchored to the texture: the content scrolls and the boxes stay put,
+    // so the field does not translate with the scene, it changes shape, and the
+    // bilinear reconstruction leaves a slope break on every cell boundary at a
+    // fixed place on screen. The lighting reads this field's GRADIENT, which is
+    // exactly what those breaks corrupt. Measured, that is a period-8 triangle
+    // reaching 0.019 of the shading range per pixel of scroll - the wave the
+    // player sees running up the picture while walking - against 0.00006 for
+    // the sliding box, and no temporal averaging can reach it because the mip
+    // is rebuilt from the depth AFTER the frame-to-frame average.
+    //
+    // The lod argument is kept so the two call sites still read alike; the
+    // window is fixed on the CPU side (see boxDepthField).
+    return texture(uDepthWideTex, uv).r;
 }
 
 /**
@@ -812,6 +827,7 @@ void GlRenderer::initGLResources() {
         uni_.hazeKnee    = glGetUniformLocation(oesPassProgram_, "uHazeKnee");
         uni_.shadeRadius = glGetUniformLocation(oesPassProgram_, "uShadeRadius");
         uni_.depthBaseTex = glGetUniformLocation(oesPassProgram_, "uDepthBaseTex");
+        uni_.depthWideTex = glGetUniformLocation(oesPassProgram_, "uDepthWideTex");
         uni_.depthBias   = glGetUniformLocation(oesPassProgram_, "uDepthBias");
         uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
         uni_.uiMaskTex   = glGetUniformLocation(oesPassProgram_, "uUiMaskTex");
@@ -1029,35 +1045,43 @@ bool GlRenderer::ensureAiTextures() {
     yHiIsDepth_ = !rgb && espcnEngine_.inChannels() == 3 && scale == 1;
     glTexImage2D(GL_TEXTURE_2D, 0, rgb ? GL_RGB8 : GL_R8, w * scale, h * scale, 0,
                  rgb ? GL_RGB : GL_RED, GL_UNSIGNED_BYTE, nullptr);
-    // Mipmaps for the depth map, so the lighting can read a genuinely blurred
-    // version through textureLod instead of averaging a sparse ring of taps by
-    // hand. The ring was its own source of flicker: a moving sprite crosses
-    // individual taps abruptly and the average jumps, which looks exactly like
-    // the network being unstable but is not.
+    // NO MIP CHAIN ANY MORE, and its absence is deliberate rather than an
+    // oversight. The lighting's wide depth read was the only thing that ever
+    // sampled it, and an anchored mip is not shift-invariant: the boxes are
+    // pinned to the texture while the game scrolls under them, so the blurred
+    // field changes shape instead of translating and its gradient - which is
+    // what the lighting actually consumes - breaks on every cell boundary at a
+    // fixed place on screen. That was measured as a period-8 wobble worth 0.019
+    // of the shading range per pixel of scroll. depthWide() now reads a sliding
+    // box computed on the worker; see boxDepthField in common/depth_profile.h.
     //
-    // The filter is what actually enables that read, and it must be set ONCE.
-    // A second glTexParameteri putting MIN_FILTER back to GL_LINEAR used to
-    // follow this line, and a non-mipmapping filter makes GLES ignore the
-    // explicit LOD in textureLod entirely and sample level 0 - so the "wide
-    // blur" the shading is built on was silently the raw native-resolution
-    // depth. Every glyph and sprite outline is a discontinuity in that, which
-    // is exactly the text shadows and lit dialogue boxes the pass was supposed
-    // to have stopped producing. The mipmap chain was being generated all
-    // along; nothing ever sampled it.
-    //
-    // Picture textures keep the plain filter: they are read at level 0 through
-    // sharpUV and must never soften into a mip.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                    yHiIsDepth_ ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    // A mipmapping MIN_FILTER here would now be worse than useless: nothing
+    // samples a level above zero, and a texture that is not mipmap-complete
+    // reads as opaque black under one.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    // Build the chain up front so the texture is mipmap-complete from the
-    // moment it exists. A mipmapping filter over a texture with only a base
-    // level samples as opaque black, and the window between allocation and the
-    // first inference result is exactly when the composite may already be
-    // binding it.
-    if (yHiIsDepth_) glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // The blurred depth the lighting takes its gradient from. R16F, for the
+    // same reason the row profile is (13.5): this is a SMOOTH field, so 8-bit
+    // quantisation shows up as contour banding across flat regions rather than
+    // as noise, and it costs 0.43% of the lambert term at the mean and 2.1% at
+    // the 99th percentile. Half floats take that to 0.03%.
+    if (depthWideTex_ == 0) glGenTextures(1, &depthWideTex_);
+    glBindTexture(GL_TEXTURE_2D, depthWideTex_);
+    // Filled with a flat mid depth rather than left undefined. The composite
+    // can bind this between the texture existing and the first inference
+    // landing, and a flat field means zero gradient, so those frames get an
+    // even multiplier instead of lighting driven by whatever was in memory.
+    depthWide_.assign((size_t)w * (size_t)h, 0.5f);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT,
+                 depthWide_.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // Overlay mask, native resolution, TWO channels. Red is the bordered-panel
@@ -1154,38 +1178,25 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             uploadReady = true;
             stats_.aiMs = aiLastMs_;
 
-            // Exponential average over the depth, which is what stops the
-            // lighting crawling. The network re-estimates from scratch every
-            // frame, and small disagreements between consecutive estimates are
-            // invisible in the depth itself but very visible once they are
-            // driving light across a character's body.
+            // Temporal average over the depth, at a FIXED rate - what it is
+            // for changed, and kDepthSmoothing carries the whole account.
             //
-            // Only for depth. A picture must never be blended with the last
-            // one - that is motion blur, and on an upscaler it would be a bug.
+            // Short version: it is no longer suppressing estimator noise, which
+            // is what it was built for and which turned out to be
+            // shift-variance and is now fixed at source. It is softening the
+            // step a two-frame sprite animation puts through the depth, which
+            // is a real change the network is right to follow and which the
+            // lighting should not snap on.
+            //
+            // Only ever for depth. A picture must never be blended with the
+            // last one: that is motion blur, and on an upscaler it is a bug.
             if (hd2dEnabled_ && outChannels == 1) {
                 if (depthHistory_.size() != aiOutput_.size()) {
                     depthHistory_ = aiOutput_;
                 } else {
-                    // The rate is PER PIXEL, not global. A fixed average is
-                    // right for a still picture and wrong the moment anything
-                    // moves: it drags the light along behind the sprite, so a
-                    // character that walked a few pixels wears highlights that
-                    // still belong where it used to be. Averaging is for
-                    // settling the estimator's disagreement with itself, and
-                    // that only happens where the picture is NOT changing.
-                    //
-                    // So where the new depth disagrees with the old by more
-                    // than the estimator's own noise, that disagreement is the
-                    // scene moving - take the new value and do not average it
-                    // against a past that no longer describes this pixel.
                     for (size_t i = 0; i < aiOutput_.size(); ++i) {
-                        const float delta =
-                            std::abs((float)aiOutput_[i] - (float)depthHistory_[i]);
-                        const float motion = std::min(
-                            std::max(delta - kDepthNoise, 0.0f) / kDepthMotion, 1.0f);
-                        const float a = kDepthSmoothing
-                                        + (kDepthSmoothingMin - kDepthSmoothing) * motion;
-                        float blended = depthHistory_[i] * (1.0f - a) + aiOutput_[i] * a;
+                        float blended = depthHistory_[i] * (1.0f - kDepthSmoothing)
+                                        + aiOutput_[i] * kDepthSmoothing;
                         depthHistory_[i] = (uint8_t)(blended + 0.5f);
                         aiOutput_[i] = depthHistory_[i];
                     }
@@ -1196,15 +1207,26 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w * scale, h * scale,
                             outChannels == 3 ? GL_RGB : GL_RED,
                             GL_UNSIGNED_BYTE, aiOutput_.data());
-            // Only the depth is ever read through a mip level; regenerating the
-            // chain for a picture texture is per-frame work nothing samples.
-            if (yHiIsDepth_) glGenerateMipmap(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, 0);
 
             if (yHiIsDepth_) {
-                // Radius 4 matches the 8x8 average the shading reads the depth
-                // through, so the profile describes the same field the gradient
-                // is taken from.
+                // The blurred field the lighting takes its gradient from. Both
+                // radii are 4, so the profile describes the same field the
+                // gradient is taken from.
+                //
+                // Computed here rather than sampled as a mip in the fragment:
+                // an anchored mip does not translate with the picture, and the
+                // gradient of a field that changes shape as the scene scrolls
+                // is the wobble this whole pass was failing on. A sliding box
+                // translates exactly. It is also two running sums per pixel at
+                // 240x160 - immaterial next to the inference that just
+                // finished, and it removes a mipmap rebuild per depth frame.
+                boxDepthField(aiOutput_.data(), w, h, 4, depthWide_);
+                glBindTexture(GL_TEXTURE_2D, depthWideTex_);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h,
+                                GL_RED, GL_FLOAT, depthWide_.data());
+                glBindTexture(GL_TEXTURE_2D, 0);
+
                 rowDepthProfile(aiOutput_.data(), w, h, 4, depthBase_);
                 glBindTexture(GL_TEXTURE_2D, depthBaseTex_);
                 glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, h,
@@ -1947,6 +1969,10 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, depthBaseTex_);
     glUniform1i(uni_.depthBaseTex, 4);
+
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, depthWideTex_);
+    glUniform1i(uni_.depthWideTex, 5);
     glActiveTexture(GL_TEXTURE0);
 
     glBindVertexArray(quadVao_);
@@ -2032,6 +2058,10 @@ void GlRenderer::release() {
             glDeleteTextures(1, &depthBaseTex_);
             depthBaseTex_ = 0;
         }
+        if (depthWideTex_ != 0) {
+            glDeleteTextures(1, &depthWideTex_);
+            depthWideTex_ = 0;
+        }
         if (detectTex_ != 0) {
             glDeleteTextures(1, &detectTex_);
             detectTex_ = 0;
@@ -2041,6 +2071,8 @@ void GlRenderer::release() {
     espcnEngine_.release();
     readbackBuffer_.clear();
     detectBuffer_.clear();
+    depthWide_.clear();
+    depthBase_.clear();
     aiInput_.clear();
     aiOutput_.clear();
     aiUiMask_.clear();
