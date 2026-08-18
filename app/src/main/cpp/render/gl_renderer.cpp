@@ -311,24 +311,38 @@ vec3 sourceBokeh(vec2 uv, float radius) {
  * Twelve taps on two rings. Bloom is the lowest-frequency thing in the whole
  * pass, so it is the one place where a coarse kernel is not a compromise - the
  * result is going to be blurred beyond recognition either way.
+ *
+ * THRESHOLDED AND ACCUMULATED IN LINEAR LIGHT, and that is not a detail. The
+ * first version took the excess over the threshold in sRGB and then decoded the
+ * SUM with pow(2.2) before adding it. An increment is not a colour, and
+ * decoding one as though it were crushes it: a mean excess of 0.06 became
+ * 0.002, about forty-seven times too small, and the effect was invisible at
+ * every strength.
+ *
+ * Gamma 2.0 rather than 2.2 - x*x and sqrt instead of two pow() calls per tap.
+ * For a term that is about to be blurred over sixty output pixels the
+ * difference does not survive being looked at, and this is thirteen pow() calls
+ * cheaper per fragment.
  */
 vec3 bloomSample(vec2 uv) {
     vec2 o = uBloomRadius / uNativeRes;
     vec2 i = o * 0.45;
     const float k = 0.70710678;
+    float th = uBloomThreshold * uBloomThreshold;
     vec3 sum = vec3(0.0);
-    sum += max(sampleSource(uv + vec2( i.x, 0.0)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2(-i.x, 0.0)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2(0.0,  i.y)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2(0.0, -i.y)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2( o.x, 0.0)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2(-o.x, 0.0)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2(0.0,  o.y)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2(0.0, -o.y)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2( o.x * k,  o.y * k)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2(-o.x * k,  o.y * k)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2( o.x * k, -o.y * k)) - uBloomThreshold, 0.0);
-    sum += max(sampleSource(uv + vec2(-o.x * k, -o.y * k)) - uBloomThreshold, 0.0);
+    vec3 t;
+    t = sampleSource(uv + vec2( i.x, 0.0));        sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2(-i.x, 0.0));        sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2(0.0,  i.y));        sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2(0.0, -i.y));        sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2( o.x, 0.0));        sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2(-o.x, 0.0));        sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2(0.0,  o.y));        sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2(0.0, -o.y));        sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2( o.x * k,  o.y * k)); sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2(-o.x * k,  o.y * k)); sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2( o.x * k, -o.y * k)); sum += max(t * t - th, 0.0);
+    t = sampleSource(uv + vec2(-o.x * k, -o.y * k)); sum += max(t * t - th, 0.0);
     return sum / 12.0;
 }
 
@@ -533,14 +547,13 @@ void main() {
         resultColor = clamp(resultColor, 0.0, 1.0);
     }
 
-    // Added in LINEAR light. Bloom is light arriving on top of light, and sRGB
-    // is gamma encoded, so adding in the encoded space brightens midtones far
-    // more than the same amount of light physically would - the same reason the
-    // masks below decode first.
+    // The bloom term is ALREADY linear (see bloomSample), so the picture is
+    // decoded to meet it and re-encoded afterwards. Adding light in the gamma
+    // space would brighten midtones far more than the same amount of light
+    // physically does - the same reason the masks below decode first.
     if (uBloomStrength > 0.001) {
-        vec3 lin = pow(max(resultColor, vec3(0.0)), vec3(2.2));
-        lin += pow(max(bloom, vec3(0.0)), vec3(2.2));
-        resultColor = pow(max(lin, vec3(0.0)), vec3(1.0 / 2.2));
+        vec3 lin = resultColor * resultColor;
+        resultColor = sqrt(max(lin + bloom, vec3(0.0)));
     }
 
     // ---------------------------------------------------------------
