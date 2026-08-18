@@ -86,13 +86,10 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:background="@drawable/bg_badge"
-                    android:lineSpacingExtra="2dp"
-                    android:padding="10dp"
+                    android:lineSpacingExtra="3dp"
                     android:text="使用指南：启动 AI 增强后，等待捕获完成，在天马 G 启动游戏"
-                    android:textColor="@color/accent_green"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                    android:textColor="@color/accent_green_dim"
+                    android:textSize="13sp" />
             </LinearLayout>
 
             <!-- Console Card: picked here so pressing start can already write

@@ -12,8 +12,11 @@ android {
         applicationId = "com.retroai.scaler"
         minSdk = 30 // Android 11+
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // Launchers cache the icon by package and version, so reinstalling at
+        // the same version leaves the old one on the home screen no matter what
+        // is in the APK. Bump this when the icon changes.
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         

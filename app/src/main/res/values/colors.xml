@@ -17,6 +17,9 @@
     <color name="text_secondary">#94A3B8</color>
     <color name="text_accent">#00E5FF</color>
     <color name="accent_green">#00E676</color>
+    <!-- The guidance line on the main screen. Full accent green shouted at a
+         reader who is not being warned about anything; this reads as a note. -->
+    <color name="accent_green_dim">#6FBF95</color>
     <color name="accent_orange">#FF9100</color>
     <color name="accent_red">#FF5252</color>
     <color name="floating_ball_bg">#D91E2433</color>
