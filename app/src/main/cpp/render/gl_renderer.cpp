@@ -984,6 +984,11 @@ void GlRenderer::aiWorkerLoop() {
     std::chrono::steady_clock::time_point prevTime{};
     int seedX = 0, seedY = 0;
     float vxSmooth = 0.0f, vySmooth = 0.0f;
+    float winDx[kScrollWindow] = {0.0f};
+    float winDy[kScrollWindow] = {0.0f};
+    float winDt[kScrollWindow] = {0.0f};
+    unsigned winN = 0;
+    bool lastWasStill = false;
     float staleMs = 0.0f;
     float lastConf = 0.0f, lastDx = 0.0f, lastDy = 0.0f, lastDtMs = 0.0f;
     int traceDy[16] = {0};
@@ -1039,15 +1044,53 @@ void GlRenderer::aiWorkerLoop() {
                     if (e.confidence >= kScrollTrust) {
                         seedX = (int)e.dx;
                         seedY = (int)e.dy;
-                        // A velocity is a physical quantity that changes over
-                        // many frames, so it is ACCUMULATED rather than taken
-                        // from the newest pair. One measurement is one sample
-                        // of it, and letting a single pair set it outright is
-                        // what makes a momentary disagreement a visible jump.
-                        const float nx = e.dx / dtMs;
-                        const float ny = e.dy / dtMs;
-                        vxSmooth = vxSmooth * (1.0f - kScrollBlend) + nx * kScrollBlend;
-                        vySmooth = vySmooth * (1.0f - kScrollBlend) + ny * kScrollBlend;
+                        // SUMMED OVER A WINDOW, not exponentially averaged, and
+                        // the difference is not a matter of taste.
+                        //
+                        // Each measurement is a whole number of texels because
+                        // the game renders at whole-texel scroll positions, so
+                        // it is not a rounding of the displacement - it IS the
+                        // displacement, exactly. A walk that averages 2.2
+                        // texels per interval is really a stream of 2s and 3s,
+                        // and total distance over a window is therefore exact
+                        // while any single interval is off by up to half.
+                        //
+                        // An exponential average cannot exploit that: it leaves
+                        // a permanent fraction of the per-sample noise, and on
+                        // the device at rate 0.5 that was 16% of the velocity,
+                        // which at a 32 ms age is a 1.6 texel swing in the
+                        // applied shift - measured as 1.50, 1.58, 1.60, 1.65,
+                        // 1.69, 1.69 over consecutive windows, against 1.6
+                        // predicted. That swing is the shading appearing to
+                        // advance and fall back. A window sum has no such
+                        // residual: the errors are not independent samples of a
+                        // noise process, they are the difference between a
+                        // rounded position and a real one, and it cancels.
+                        winDy[winN % kScrollWindow] = e.dy;
+                        winDx[winN % kScrollWindow] = e.dx;
+                        winDt[winN % kScrollWindow] = dtMs;
+                        ++winN;
+                        const int have = winN < kScrollWindow ? (int)winN : kScrollWindow;
+                        float sumX = 0.0f, sumY = 0.0f, sumT = 0.0f;
+                        for (int i = 0; i < have; ++i) {
+                            sumX += winDx[i];
+                            sumY += winDy[i];
+                            sumT += winDt[i];
+                        }
+                        if (sumT > 0.5f) {
+                            vxSmooth = sumX / sumT;
+                            vySmooth = sumY / sumT;
+                        }
+                        // A stop has to be immediate, and it is the one thing a
+                        // window is bad at - it would keep reporting the walk
+                        // for another 200 ms. Two confident zeroes in a row is
+                        // not ambiguous: the scene is not moving, so neither
+                        // should the correction.
+                        if (e.dx == 0.0f && e.dy == 0.0f && lastWasStill) {
+                            winN = 0;
+                            vxSmooth = vySmooth = 0.0f;
+                        }
+                        lastWasStill = (e.dx == 0.0f && e.dy == 0.0f);
                         staleMs = 0.0f;
                     } else {
                         // NOT a reason to stop compensating. The scene is still

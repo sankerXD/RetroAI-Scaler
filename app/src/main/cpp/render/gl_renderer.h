@@ -292,8 +292,14 @@ private:
     static constexpr float kMaxScrollShift = 12.0f;
     /** Below this a pair is not measuring the scroll, so it must not set it. */
     static constexpr float kScrollTrust = 0.55f;
-    /** How much of each trusted measurement enters the running velocity. */
-    static constexpr float kScrollBlend = 0.5f;
+    /**
+     * Intervals of measured displacement the velocity is summed over.
+     *
+     * 8 is about 220 ms, long enough that the whole-texel rounding of any one
+     * interval cancels and short enough to follow a real change in speed. A
+     * stop does not wait for it - two confident zeroes clear the window.
+     */
+    static constexpr int kScrollWindow = 8;
     /** Unreadable for this long and the velocity starts decaying toward zero. */
     static constexpr float kScrollHoldMs = 120.0f;
     /** Diagnostic accumulators for the applied-shift trace. */
