@@ -10,6 +10,7 @@
 #include <vector>
 #include "../capture/frame_cropper.h"
 #include "../ai/espcn_inference.h"
+#include <chrono>
 #include "ui_panels.h"
 
 namespace retroai {
@@ -243,6 +244,52 @@ private:
      */
     static constexpr float kDepthSmoothing = 0.55f;
     std::vector<uint8_t> depthHistory_{};
+
+    // ---- scroll compensation -------------------------------------------
+    /**
+     * The depth is a HELD sample of a field that never stops moving.
+     *
+     * A result lands every ~20 ms and the display runs at 60 Hz, so between
+     * results the picture scrolls and the depth does not: the offset between
+     * them ramps up and drops back every time a result arrives, which is the
+     * shading appearing to advance a pixel and fall back. It is not the blend
+     * rate (turning the blend off changes it 7%) and not the 8-bit history (a
+     * float history scores identically) - it is the hold itself. Simulated
+     * over the real schedule, per-frame shading residual 0.0158 held against
+     * 0.0003 compensated, 56x. Model repo: scripts/probe_latency.py.
+     *
+     * So the fragment reads the depth at uv MINUS the scroll accumulated since
+     * the frame that depth describes. Written by the worker under aiMutex_,
+     * copied out by the render thread when it collects a result.
+     *
+     * This is only correct because the network is equivariant to integer
+     * translation (13.11). Shifting depth assumes D(shift(I)) == shift(D(I)),
+     * and on the pre-down=1 network that was false by 0.027 at odd shifts.
+     */
+    float aiScrollVx_{0.0f};      // native texels per millisecond
+    float aiScrollVy_{0.0f};
+    float aiScrollConf_{0.0f};    // 0 = do not compensate
+    bool aiWantScroll_{false};
+    std::chrono::steady_clock::time_point aiJobTime_{};
+    std::chrono::steady_clock::time_point aiResultFrameTime_{};
+
+    /** Render-thread copies, valid for the depth currently on the GPU. */
+    float depthScrollVx_{0.0f};
+    float depthScrollVy_{0.0f};
+    float depthScrollConf_{0.0f};
+    std::chrono::steady_clock::time_point depthFrameTime_{};
+    /**
+     * Ceiling on the compensation, native texels.
+     *
+     * The velocity is extrapolated from the interval BEFORE the depth's frame,
+     * so a direction change is mispredicted for one inference interval - which
+     * is no worse than the uncompensated behaviour, but it must not be allowed
+     * to grow. At a normal walking scroll the shift is 1-3 texels; anything
+     * near this ceiling is a bad estimate, and smearing the lighting halfway
+     * across the screen would be far more visible than the artefact being
+     * removed.
+     */
+    static constexpr float kMaxScrollShift = 12.0f;
     bool hasGeometry_{false};
     bool paused_{false};
     bool pausedFrameDrawn_{false};
@@ -415,6 +462,7 @@ private:
         GLint shadeRadius{-1};
         GLint depthBaseTex{-1};
         GLint depthWideTex{-1};
+        GLint depthShift{-1};
         GLint depthBias{-1};
         GLint shadeStrength{-1};
         GLint uiMaskTex{-1};

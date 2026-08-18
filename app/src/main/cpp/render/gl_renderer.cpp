@@ -1,5 +1,6 @@
 #include "gl_renderer.h"
 #include "../common/depth_profile.h"
+#include "../common/scroll_estimator.h"
 #include "../common/log.h"
 #include "../common/cpu_affinity.h"
 #include <chrono>
@@ -53,6 +54,7 @@ uniform float uHazeKnee;
 uniform float uShadeRadius;
 uniform sampler2D uDepthBaseTex; // the network's per-row bias
 uniform sampler2D uDepthWideTex; // depth through a sliding box, native res
+uniform vec2 uDepthShift;        // native texels the scene moved since that depth
 uniform float uDepthBias;        // how much of it to subtract; 0 = off
 uniform float uShadeStrength;
 uniform sampler2D uUiMaskTex; // 1 over interface panels, which stay unlit
@@ -214,7 +216,15 @@ float depthWide(vec2 uv, float lod) {
     //
     // The lod argument is kept so the two call sites still read alike; the
     // window is fixed on the CPU side (see boxDepthField).
-    return texture(uDepthWideTex, uv).r;
+    //
+    // MINUS the shift, and the sign is the whole point: this depth describes a
+    // frame from 20-40 ms ago, the scene has moved uDepthShift native texels
+    // since, so the value belonging to what is NOW at uv was then at uv minus
+    // that. Getting it backwards doubles the error instead of removing it, and
+    // this project has already shipped a motion compensation with the sign
+    // reversed once (13.3) - tools/check_scroll_estimator.py pins the
+    // estimator's direction, and this line is the other half of that contract.
+    return texture(uDepthWideTex, uv - uDepthShift / uNativeRes).r;
 }
 
 /**
@@ -242,7 +252,10 @@ float depthWide(vec2 uv, float lod) {
  * haze's job, and it reads the absolute depth.
  */
 float depthDetail(vec2 uv, float lod) {
-    return depthWide(uv, lod) - uDepthBias * texture(uDepthBaseTex, uv).r;
+    // The base is a profile OF the depth, so it moves with it. Currently inert
+    // (uDepthBias is 0) but wrong-if-re-enabled is worse than unused.
+    return depthWide(uv, lod)
+         - uDepthBias * texture(uDepthBaseTex, uv - uDepthShift / uNativeRes).r;
 }
 
 /**
@@ -828,6 +841,7 @@ void GlRenderer::initGLResources() {
         uni_.shadeRadius = glGetUniformLocation(oesPassProgram_, "uShadeRadius");
         uni_.depthBaseTex = glGetUniformLocation(oesPassProgram_, "uDepthBaseTex");
         uni_.depthWideTex = glGetUniformLocation(oesPassProgram_, "uDepthWideTex");
+        uni_.depthShift   = glGetUniformLocation(oesPassProgram_, "uDepthShift");
         uni_.depthBias   = glGetUniformLocation(oesPassProgram_, "uDepthBias");
         uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
         uni_.uiMaskTex   = glGetUniformLocation(oesPassProgram_, "uUiMaskTex");
@@ -962,6 +976,13 @@ void GlRenderer::aiWorkerLoop() {
     std::vector<uint8_t> localIn;
     std::vector<uint8_t> localOut;
     std::vector<uint8_t> localUiMask;
+    // Previous submitted frame, kept here rather than as a member: only this
+    // thread ever touches it, so it needs no lock and cannot be read half
+    // written by anyone else.
+    std::vector<uint8_t> prevIn;
+    int prevW = 0, prevH = 0;
+    std::chrono::steady_clock::time_point prevTime{};
+    int seedX = 0, seedY = 0;
 
     std::unique_lock<std::mutex> lock(aiMutex_);
     while (true) {
@@ -973,6 +994,8 @@ void GlRenderer::aiWorkerLoop() {
         const int h = aiJobHeight_;
         const int scale = aiScale_;
         const bool wantUiMask = aiWantUiMask_;
+        const bool wantScroll = aiWantScroll_;
+        const auto jobTime = aiJobTime_;
         aiJobPending_ = false;
         aiBusy_ = true;
         lock.unlock();
@@ -988,6 +1011,40 @@ void GlRenderer::aiWorkerLoop() {
             uiPanels_.detect(localIn.data(), w, h, localUiMask);
         }
 
+        // How fast the picture is scrolling, from the two frames this thread
+        // has in hand. Here and not on the render thread for the same reason
+        // the panel detector is here: that thread holds the pipeline mutex
+        // across the whole GPU frame (10.3a) and must not grow CPU work.
+        float vx = 0.0f, vy = 0.0f, conf = 0.0f;
+        if (ok && wantScroll) {
+            const int channels = espcnEngine_.inChannels();
+            if ((int)prevIn.size() == w * h * channels && prevW == w && prevH == h) {
+                const float dtMs = std::chrono::duration<float, std::milli>(
+                    jobTime - prevTime).count();
+                // A gap this long means the pipeline stalled or the game was
+                // paused; the two frames are not consecutive and the vector
+                // between them says nothing about the current velocity.
+                if (dtMs > 0.5f && dtMs < 200.0f) {
+                    const ScrollEstimate e = estimateScroll(
+                        prevIn.data(), localIn.data(), w, h, channels, 8, seedX, seedY);
+                    if (e.confidence > 0.0f) {
+                        seedX = (int)e.dx;
+                        seedY = (int)e.dy;
+                    }
+                    vx = e.dx / dtMs;
+                    vy = e.dy / dtMs;
+                    conf = e.confidence;
+                }
+            }
+            prevIn = localIn;
+            prevW = w;
+            prevH = h;
+            prevTime = jobTime;
+        } else if (!wantScroll && !prevIn.empty()) {
+            prevIn.clear();
+            seedX = seedY = 0;
+        }
+
         lock.lock();
         aiBusy_ = false;
         if (ok) {
@@ -995,6 +1052,10 @@ void GlRenderer::aiWorkerLoop() {
             if (wantUiMask) aiUiMask_.swap(localUiMask);
             aiResultReady_ = true;
             aiLastMs_ = ms;
+            aiScrollVx_ = vx;
+            aiScrollVy_ = vy;
+            aiScrollConf_ = conf;
+            aiResultFrameTime_ = jobTime;
         } else {
             aiFailed_ = true;
         }
@@ -1177,6 +1238,13 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             aiResultReady_ = false;
             uploadReady = true;
             stats_.aiMs = aiLastMs_;
+            // Taken with the depth, not separately: the velocity and the frame
+            // it was measured at have to describe the same result, or the
+            // compensation is extrapolating from the wrong instant.
+            depthScrollVx_ = aiScrollVx_;
+            depthScrollVy_ = aiScrollVy_;
+            depthScrollConf_ = aiScrollConf_;
+            depthFrameTime_ = aiResultFrameTime_;
 
             // Temporal average over the depth, at a FIXED rate - what it is
             // for changed, and kDepthSmoothing carries the whole account.
@@ -1307,6 +1375,11 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             aiJobWidth_ = w;
             aiJobHeight_ = h;
             aiWantUiMask_ = yHiIsDepth_ && hd2dEnabled_;
+            aiWantScroll_ = yHiIsDepth_ && hd2dEnabled_;
+            // Stamped at submission, which is when this frame was read back -
+            // the depth that comes out describes the picture at THIS moment,
+            // and the compensation needs to know how long ago that was.
+            aiJobTime_ = std::chrono::steady_clock::now();
             aiJobPending_ = true;
         }
         aiCv_.notify_one();
@@ -1918,6 +1991,24 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // see AGENT.md 13.5 and the model repo's filter_ui_frames.py / --vflip.
     // Set this to 1.0 to bring the compensation back if that does not land.
     glUniform1f(uni_.depthBias, 0.0f);
+    // How far the scene has scrolled since the frame the current depth
+    // describes. Scaled by confidence rather than gated on it: a frame the
+    // estimator only partly explains deserves a partial correction, and a
+    // shift that snapped on and off between frames would be a new flicker in
+    // place of the one it removes.
+    {
+        float sx = 0.0f, sy = 0.0f;
+        if (hd2dEnabled_ && depthScrollConf_ > 0.0f
+            && depthFrameTime_.time_since_epoch().count() != 0) {
+            const float ageMs = std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - depthFrameTime_).count();
+            sx = depthScrollVx_ * ageMs * depthScrollConf_;
+            sy = depthScrollVy_ * ageMs * depthScrollConf_;
+            sx = std::max(-kMaxScrollShift, std::min(kMaxScrollShift, sx));
+            sy = std::max(-kMaxScrollShift, std::min(kMaxScrollShift, sy));
+        }
+        glUniform2f(uni_.depthShift, sx, sy);
+    }
     glUniform1f(uni_.shadeStrength, hd2dStrength_);
     // The sharp band sits slightly below centre: in a scene viewed from above,
     // the player and the action are usually a little under the middle of the

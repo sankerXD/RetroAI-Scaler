@@ -26,6 +26,7 @@ set(SOURCE_FILES
     native-lib.cpp
     common/cpu_affinity.cpp
     common/depth_profile.cpp
+    common/scroll_estimator.cpp
     capture/hw_buffer_reader.cpp
     capture/frame_cropper.cpp
     ai/espcn_inference.cpp

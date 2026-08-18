@@ -65,6 +65,28 @@ extern "C" void row_profile(const uint8_t* src, int w, int h, int r, float* dst)
 }
 """
 
+def _ensure_numpy():
+    """
+    Re-exec under an interpreter that has numpy, if this one does not.
+
+    Gradle invokes these with the system python3, which on a developer Mac
+    usually has no numpy - so without this the check prints "skip", exits 0, and
+    the build gate silently stops gating. A check that cannot fail is worse than
+    no check, because it is also a claim that something was verified.
+    """
+    try:
+        import numpy  # noqa: F401
+        return
+    except ImportError:
+        pass
+    import glob
+    for cand in glob.glob(os.path.join(os.path.dirname(ROOT), "*", ".venv", "bin", "python")):
+        if subprocess.run([cand, "-c", "import numpy"],
+                          capture_output=True).returncode == 0:
+            os.execv(cand, [cand] + sys.argv)
+    print("skip: no interpreter with numpy found")
+    raise SystemExit(0)
+
 W, H, RADIUS = 240, 160, 4
 
 # Shader uniform -> hd2d.py constant. Only the ones the shading maths reads;
@@ -105,11 +127,8 @@ def shader_constants():
 
 
 def main() -> int:
-    try:
-        import numpy as np
-    except ImportError:
-        print("skip: numpy not available")
-        return 0
+    _ensure_numpy()
+    import numpy as np
     if not os.path.isdir(MODEL_REPO):
         print(f"skip: no model repository at {MODEL_REPO}")
         return 0
