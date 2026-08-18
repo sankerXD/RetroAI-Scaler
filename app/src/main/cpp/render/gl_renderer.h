@@ -117,6 +117,8 @@ public:
     /** Depth-driven lighting on top of whatever upscaler is running. */
     void setHd2dEnabled(bool enabled) { hd2dEnabled_ = enabled; }
     void setHd2dStrength(float strength) { hd2dStrength_ = strength; }
+    /** Tilt-shift focus band, 0..1. Needs no depth, so it stands alone. */
+    void setDofStrength(float strength) { dofStrength_ = strength; }
 
     /**
      * Drops the network; rendering falls back to the shader path.
@@ -185,6 +187,8 @@ private:
     /** HD-2D lights the picture with the depth net instead of replacing it. */
     bool hd2dEnabled_{false};
     float hd2dStrength_{0.5f};
+    /** Tilt-shift depth of field. Independent of HD-2D: it needs no depth. */
+    float dofStrength_{0.0f};
     /**
      * Previous depth map, for the temporal average. 0.35 keeps roughly three
      * inference frames in flight: enough to settle the estimator's flicker,
@@ -388,6 +392,10 @@ private:
         GLint depthBias{-1};
         GLint shadeStrength{-1};
         GLint uiMaskTex{-1};
+        GLint dofStrength{-1};
+        GLint dofCentre{-1};
+        GLint dofBand{-1};
+        GLint dofRadius{-1};
         GLint aiEnabled{-1};
         GLint scanline{-1};
         GLint lcdGrid{-1};

@@ -180,6 +180,17 @@
             app:strokeColor="@color/primary" />
 
         <Button
+            android:id="@+id/btnDof"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="6dp"
+            android:text="移轴景深：关（长按调强度）"
+            android:textColor="@color/primary"
+            android:textSize="12sp"
+            app:strokeColor="@color/primary" />
+
+        <Button
             android:id="@+id/btnToggleGuide"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"

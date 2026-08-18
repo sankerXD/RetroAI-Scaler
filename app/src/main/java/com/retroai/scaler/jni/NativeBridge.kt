@@ -99,6 +99,12 @@ class NativeBridge {
     /** Depth-driven HD-2D lighting on top of the selected upscaler. */
     external fun nativeSetHd2d(enabled: Boolean, strength: Float)
 
+    /**
+     * Tilt-shift focus band, 0..1. Deliberately separate from HD-2D: it needs
+     * no depth, so it works with the network off.
+     */
+    external fun nativeSetDof(strength: Float)
+
     external fun nativeRequestFrameCapture()
 
     /** RGBA bytes, top row first, or null if nothing is ready. Fills sizeOut with {w, h}. */

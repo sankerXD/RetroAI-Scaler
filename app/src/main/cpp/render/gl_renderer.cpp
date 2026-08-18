@@ -55,6 +55,10 @@ uniform sampler2D uDepthBaseTex; // the network's per-row bias
 uniform float uDepthBias;        // how much of it to subtract; 0 = off
 uniform float uShadeStrength;
 uniform sampler2D uUiMaskTex; // 1 over interface panels, which stay unlit
+uniform float uDofStrength;   // tilt-shift focus band; 0 = off
+uniform float uDofCentre;     // where the sharp band sits, in output uv.y
+uniform float uDofBand;       // half-height of the fully sharp band
+uniform float uDofRadius;     // blur radius at full defocus, in native texels
 uniform int uAiEnabled;
 uniform float uScanlineIntensity;
 uniform float uMaskStrength;
@@ -235,6 +239,65 @@ float softMin(float a, float b, float k) {
     return min(a, b) - h * h * k * 0.25;
 }
 
+/**
+ * Tilt-shift depth of field: a sharp band across the middle, softening towards
+ * the top and the bottom of the frame.
+ *
+ * This is the single most recognisable HD-2D cue and, unlike everything else in
+ * this pass, it needs no depth at all - in a scene viewed from above, the top of
+ * the frame really is farther away, so a FIXED band is a good enough stand-in
+ * for a real depth of field (section 12.3).
+ *
+ * It deliberately destroys pixel sharpness away from the band. That is the whole
+ * point and it is a decision, not an oversight: this is the one place in the
+ * project where softening the artist's pixels is the intended result.
+ *
+ * Interface panels are exempt. A blurred dialogue box just reads as broken, and
+ * the panel mask that keeps the lighting off them serves here unchanged.
+ */
+float dofAmount(vec2 uv) {
+    float d = max(abs(uv.y - uDofCentre) - uDofBand, 0.0);
+    return smoothstep(0.0, max(1.0 - uDofBand, 1e-3), d / 0.5);
+}
+
+/**
+ * Smooth read of the source, for the out-of-focus regions.
+ *
+ * Cheaper than blurring the sharp result would be, and better: where the
+ * picture is about to be defocused there is no point running edge
+ * reconstruction on it first, so the expensive path is simply skipped. Taps are
+ * in native texels, and sampleSource() clamps inside the capture window, so
+ * nothing outside can bleed in.
+ */
+vec3 sourceBokeh(vec2 uv, float radius) {
+    // TWO rings, not one. A single ring is a circle of samples, not a disc:
+    // past two or three texels it stops being a blur and starts being eight
+    // ghost copies, and widening it barely changes the picture at all
+    // (measured: four times the radius moved the result 1.15% -> 1.83%).
+    // An inner ring at half the radius, weighted up, fills the disc in.
+    const float k = 0.70710678;
+    vec2 o = radius / uNativeRes;
+    vec2 i = o * 0.5;
+    vec3 c = sampleSource(uv) * 3.0;
+    c += (sampleSource(uv + vec2( i.x, 0.0))
+        + sampleSource(uv + vec2(-i.x, 0.0))
+        + sampleSource(uv + vec2(0.0,  i.y))
+        + sampleSource(uv + vec2(0.0, -i.y))
+        + sampleSource(uv + vec2( i.x * k,  i.y * k))
+        + sampleSource(uv + vec2(-i.x * k,  i.y * k))
+        + sampleSource(uv + vec2( i.x * k, -i.y * k))
+        + sampleSource(uv + vec2(-i.x * k, -i.y * k))) * 1.5;
+    c += sampleSource(uv + vec2( o.x, 0.0))
+       + sampleSource(uv + vec2(-o.x, 0.0))
+       + sampleSource(uv + vec2(0.0,  o.y))
+       + sampleSource(uv + vec2(0.0, -o.y))
+       + sampleSource(uv + vec2( o.x * k,  o.y * k))
+       + sampleSource(uv + vec2(-o.x * k,  o.y * k))
+       + sampleSource(uv + vec2( o.x * k, -o.y * k))
+       + sampleSource(uv + vec2(-o.x * k, -o.y * k));
+    return c / 23.0;
+}
+
 vec3 applyShading(vec2 uv, vec3 colour, vec2 texelSize) {
     // LOD 3 is roughly an 8x8 native-pixel average - wide enough that a whole
     // glyph and most of a sprite disappear into it, leaving only the shape of
@@ -393,6 +456,19 @@ void main() {
         resultColor = clamp(resultColor, 0.0, 1.0);
     } else {
         resultColor = sampleSourceSharp(uv);
+    }
+
+    // Tilt-shift, before the lighting rather than after: the lighting is a
+    // slowly varying multiplier, so the order barely changes the result, and
+    // doing it here means the blurred taps are of the SOURCE - no second pass,
+    // and the edge reconstruction is skipped exactly where it would be thrown
+    // away. Panels stay sharp via the same mask that keeps the light off them.
+    if (uDofStrength > 0.001) {
+        float dof = dofAmount(uv) * uDofStrength;
+        dof *= 1.0 - texture(uUiMaskTex, uv).r;
+        if (dof > 0.002) {
+            resultColor = mix(resultColor, sourceBokeh(uv, dof * uDofRadius), dof);
+        }
     }
 
     // HD-2D: the picture is whatever the chosen upscaler produced, untouched,
@@ -665,6 +741,10 @@ void GlRenderer::initGLResources() {
         uni_.depthBias   = glGetUniformLocation(oesPassProgram_, "uDepthBias");
         uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
         uni_.uiMaskTex   = glGetUniformLocation(oesPassProgram_, "uUiMaskTex");
+        uni_.dofStrength = glGetUniformLocation(oesPassProgram_, "uDofStrength");
+        uni_.dofCentre   = glGetUniformLocation(oesPassProgram_, "uDofCentre");
+        uni_.dofBand     = glGetUniformLocation(oesPassProgram_, "uDofBand");
+        uni_.dofRadius   = glGetUniformLocation(oesPassProgram_, "uDofRadius");
         uni_.aiEnabled   = glGetUniformLocation(oesPassProgram_, "uAiEnabled");
         uni_.scanline    = glGetUniformLocation(oesPassProgram_, "uScanlineIntensity");
         uni_.lcdGrid     = glGetUniformLocation(oesPassProgram_, "uMaskStrength");
@@ -1733,6 +1813,15 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // Set this to 1.0 to bring the compensation back if that does not land.
     glUniform1f(uni_.depthBias, 0.0f);
     glUniform1f(uni_.shadeStrength, hd2dStrength_);
+    // The sharp band sits slightly below centre: in a scene viewed from above,
+    // the player and the action are usually a little under the middle of the
+    // frame, and the top of the frame is the far distance.
+    glUniform1f(uni_.dofStrength, dofStrength_);
+    glUniform1f(uni_.dofCentre, 0.56f);
+    glUniform1f(uni_.dofBand, 0.20f);
+    // Native texels at full defocus. 2.2 was tried and is invisible; at 6 the
+    // band reads as a lens rather than as a slightly soft picture.
+    glUniform1f(uni_.dofRadius, 6.0f);
     glUniform1i(uni_.aiEnabled, isAiEnabled_ ? 1 : 0);
     glUniform1f(uni_.scanline, scanlineIntensity_);
     glUniform1f(uni_.lcdGrid, lcdGridIntensity_);

@@ -490,6 +490,25 @@ class FloatingBallManager(
             }
         }
 
+        root.findViewById<Button>(R.id.btnDof).apply {
+            updateDofText(this)
+            setOnLongClickListener {
+                val steps = listOf(0.25f, 0.5f, 0.75f, 1.0f)
+                val next = steps.firstOrNull { it > profile.dofStrength + 0.01f } ?: steps.first()
+                profile.dofStrength = next
+                updateDofText(this)
+                applyRenderProfile()
+                true
+            }
+            setOnClickListener {
+                // No model to load or drop - the focus band needs no depth, so
+                // unlike HD-2D this is a uniform and nothing else.
+                profile.dofStrength = if (profile.dofStrength > 0.001f) 0.0f else 0.5f
+                updateDofText(this)
+                applyRenderProfile()
+            }
+        }
+
         root.findViewById<Button>(R.id.btnToggleGuide).apply {
             updateGuideButtonText(this)
             setOnClickListener {
@@ -710,6 +729,13 @@ class FloatingBallManager(
         } else {
             "开始自动采集"
         }
+    }
+
+    private fun updateDofText(button: Button) {
+        button.text = if (profile.dofStrength > 0.001f)
+            "移轴景深：开　${(profile.dofStrength * 100).toInt()}%"
+        else
+            "移轴景深：关（长按调强度）"
     }
 
     private fun updateHd2dText(button: Button) {
@@ -966,6 +992,7 @@ class FloatingBallManager(
     private fun applyRenderProfile() {
         nativeBridge.nativeSetMaskType(profile.maskType.id)
         nativeBridge.nativeSetHd2d(profile.hd2dEnabled, profile.hd2dStrength)
+        nativeBridge.nativeSetDof(profile.dofStrength)
         nativeBridge.nativeSetRenderConfig(
             profile.isAiEnabled,
             profile.console.nativeWidth,

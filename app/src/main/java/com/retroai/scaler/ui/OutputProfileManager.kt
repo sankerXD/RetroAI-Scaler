@@ -188,6 +188,15 @@ data class RenderProfile(
      * bearable - it was the artefact being turned down, not the light.
      */
     var hd2dStrength: Float = 0.75f,
+    /**
+     * Tilt-shift depth of field, 0..1. The most recognisable HD-2D cue, and the
+     * only one that needs no depth at all - a fixed focus band stands in for it,
+     * because in a scene viewed from above the top of the frame IS the distance.
+     *
+     * It softens the artist's pixels away from the band on purpose. Everywhere
+     * else in this project that would be a bug; here it is the effect.
+     */
+    var dofStrength: Float = 0.0f,
     /** Disable RetroArch's own shader when writing its config. */
     var disableRaShader: Boolean = true,
     /** Keep the output clear of the capture window. */
@@ -462,6 +471,7 @@ object ProfilePreference {
             showSourceGuide = p.getBoolean(key(console, "guide"), false),
             hd2dEnabled = p.getBoolean(key(console, "hd2d"), false),
             hd2dStrength = p.getFloat(key(console, "hd2dStrength"), 0.75f),
+            dofStrength = p.getFloat(key(console, "dof"), 0.0f),
             disableRaShader = p.getBoolean(key(console, "disableShader"), true),
             avoidSourceOverlap = p.getBoolean(key(console, "avoidOverlap"), true),
             captureMode = lastCaptureMode(context)
@@ -483,6 +493,7 @@ object ProfilePreference {
             .putBoolean(key(c, "guide"), profile.showSourceGuide)
             .putBoolean(key(c, "hd2d"), profile.hd2dEnabled)
             .putFloat(key(c, "hd2dStrength"), profile.hd2dStrength)
+            .putFloat(key(c, "dof"), profile.dofStrength)
             .putBoolean(key(c, "disableShader"), profile.disableRaShader)
             .putBoolean(key(c, "avoidOverlap"), profile.avoidSourceOverlap)
             .apply()

@@ -373,6 +373,18 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeSetHd2d(
 }
 
 JNIEXPORT void JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeSetDof(
+    JNIEnv* /* env */,
+    jobject /* this */,
+    jfloat strength
+) {
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    if (gRenderer) {
+        gRenderer->setDofStrength(strength);
+    }
+}
+
+JNIEXPORT void JNICALL
 Java_com_retroai_scaler_jni_NativeBridge_nativeSetMaskType(
     JNIEnv* /* env */,
     jobject /* this */,
