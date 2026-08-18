@@ -290,6 +290,12 @@ private:
      * removed.
      */
     static constexpr float kMaxScrollShift = 12.0f;
+    /** Below this a pair is not measuring the scroll, so it must not set it. */
+    static constexpr float kScrollTrust = 0.55f;
+    /** How much of each trusted measurement enters the running velocity. */
+    static constexpr float kScrollBlend = 0.5f;
+    /** Unreadable for this long and the velocity starts decaying toward zero. */
+    static constexpr float kScrollHoldMs = 120.0f;
     bool hasGeometry_{false};
     bool paused_{false};
     bool pausedFrameDrawn_{false};

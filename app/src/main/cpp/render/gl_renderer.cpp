@@ -983,6 +983,10 @@ void GlRenderer::aiWorkerLoop() {
     int prevW = 0, prevH = 0;
     std::chrono::steady_clock::time_point prevTime{};
     int seedX = 0, seedY = 0;
+    float vxSmooth = 0.0f, vySmooth = 0.0f;
+    float staleMs = 0.0f;
+    float lastConf = 0.0f, lastDx = 0.0f, lastDy = 0.0f, lastDtMs = 0.0f;
+    unsigned scrollLogTick = 0;
 
     std::unique_lock<std::mutex> lock(aiMutex_);
     while (true) {
@@ -1015,7 +1019,6 @@ void GlRenderer::aiWorkerLoop() {
         // has in hand. Here and not on the render thread for the same reason
         // the panel detector is here: that thread holds the pipeline mutex
         // across the whole GPU frame (10.3a) and must not grow CPU work.
-        float vx = 0.0f, vy = 0.0f, conf = 0.0f;
         if (ok && wantScroll) {
             const int channels = espcnEngine_.inChannels();
             if ((int)prevIn.size() == w * h * channels && prevW == w && prevH == h) {
@@ -1025,24 +1028,60 @@ void GlRenderer::aiWorkerLoop() {
                 // paused; the two frames are not consecutive and the vector
                 // between them says nothing about the current velocity.
                 if (dtMs > 0.5f && dtMs < 200.0f) {
+                    // Radius 16, not 8. A fast scroll moves further than 8
+                    // texels between results, and beyond the search the best
+                    // in-range match is not merely unfound, it is WRONG - a
+                    // clamped vector with enough confidence to be believed.
                     const ScrollEstimate e = estimateScroll(
-                        prevIn.data(), localIn.data(), w, h, channels, 8, seedX, seedY);
-                    if (e.confidence > 0.0f) {
+                        prevIn.data(), localIn.data(), w, h, channels, 16, seedX, seedY);
+                    if (e.confidence >= kScrollTrust) {
                         seedX = (int)e.dx;
                         seedY = (int)e.dy;
+                        // A velocity is a physical quantity that changes over
+                        // many frames, so it is ACCUMULATED rather than taken
+                        // from the newest pair. One measurement is one sample
+                        // of it, and letting a single pair set it outright is
+                        // what makes a momentary disagreement a visible jump.
+                        const float nx = e.dx / dtMs;
+                        const float ny = e.dy / dtMs;
+                        vxSmooth = vxSmooth * (1.0f - kScrollBlend) + nx * kScrollBlend;
+                        vySmooth = vySmooth * (1.0f - kScrollBlend) + ny * kScrollBlend;
+                        staleMs = 0.0f;
+                    } else {
+                        // NOT a reason to stop compensating. The scene is still
+                        // displaced from the frame the depth describes; all
+                        // this says is that THIS pair could not measure it. The
+                        // velocity is held and allowed to decay, so an
+                        // unreadable frame costs accuracy rather than switching
+                        // the correction off and snapping the shading back to
+                        // where it would have been with no compensation at all.
+                        staleMs += dtMs;
+                        if (staleMs > kScrollHoldMs) {
+                            vxSmooth *= 0.5f;
+                            vySmooth *= 0.5f;
+                            staleMs = 0.0f;
+                        }
                     }
-                    vx = e.dx / dtMs;
-                    vy = e.dy / dtMs;
-                    conf = e.confidence;
+                    lastConf = e.confidence;
+                    lastDx = e.dx;
+                    lastDy = e.dy;
+                    lastDtMs = dtMs;
                 }
             }
             prevIn = localIn;
             prevW = w;
             prevH = h;
             prevTime = jobTime;
-        } else if (!wantScroll && !prevIn.empty()) {
-            prevIn.clear();
+        } else if (!wantScroll) {
+            if (!prevIn.empty()) prevIn.clear();
             seedX = seedY = 0;
+            vxSmooth = vySmooth = 0.0f;
+        }
+
+        if (wantScroll && ++scrollLogTick % 60 == 1) {
+            ALOGI("Scroll: d=(%.0f,%.0f) conf=%.2f dt=%.1fms v=(%.4f,%.4f)px/ms "
+                  "stale=%.0fms", lastDx, lastDy, lastConf, lastDtMs,
+                  vxSmooth, vySmooth, staleMs);
         }
 
         lock.lock();
@@ -1052,9 +1091,9 @@ void GlRenderer::aiWorkerLoop() {
             if (wantUiMask) aiUiMask_.swap(localUiMask);
             aiResultReady_ = true;
             aiLastMs_ = ms;
-            aiScrollVx_ = vx;
-            aiScrollVy_ = vy;
-            aiScrollConf_ = conf;
+            aiScrollVx_ = vxSmooth;
+            aiScrollVy_ = vySmooth;
+            aiScrollConf_ = lastConf;
             aiResultFrameTime_ = jobTime;
         } else {
             aiFailed_ = true;
@@ -1998,12 +2037,20 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // place of the one it removes.
     {
         float sx = 0.0f, sy = 0.0f;
-        if (hd2dEnabled_ && depthScrollConf_ > 0.0f
-            && depthFrameTime_.time_since_epoch().count() != 0) {
+        if (hd2dEnabled_ && depthFrameTime_.time_since_epoch().count() != 0) {
             const float ageMs = std::chrono::duration<float, std::milli>(
                 std::chrono::steady_clock::now() - depthFrameTime_).count();
-            sx = depthScrollVx_ * ageMs * depthScrollConf_;
-            sy = depthScrollVy_ * ageMs * depthScrollConf_;
+            // NOT scaled by confidence, and that was the mistake in the first
+            // version. Confidence describes how well the LATEST PAIR could be
+            // measured; it says nothing about how far the scene has moved since
+            // the depth's frame, which is what is being corrected. Multiplying
+            // the two meant one unreadable pair dropped the correction to zero
+            // and snapped the shading back to its uncompensated position -
+            // bigger and faster than the artefact it was added to remove.
+            // Confidence now gates whether the velocity is UPDATED; see the
+            // worker.
+            sx = depthScrollVx_ * ageMs;
+            sy = depthScrollVy_ * ageMs;
             sx = std::max(-kMaxScrollShift, std::min(kMaxScrollShift, sx));
             sy = std::max(-kMaxScrollShift, std::min(kMaxScrollShift, sy));
         }
