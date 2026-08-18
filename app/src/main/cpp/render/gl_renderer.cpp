@@ -1,5 +1,6 @@
 #include "gl_renderer.h"
 #include "../common/depth_profile.h"
+#include "../common/scroll_estimator.h"
 #include "../common/log.h"
 #include "../common/cpu_affinity.h"
 #include <chrono>
@@ -53,6 +54,7 @@ uniform float uHazeKnee;
 uniform float uShadeRadius;
 uniform sampler2D uDepthBaseTex; // the network's per-row bias
 uniform sampler2D uDepthWideTex; // depth through a sliding box, native res
+uniform vec2 uDepthShift;        // native texels the scene moved since that depth
 uniform float uDepthBias;        // how much of it to subtract; 0 = off
 uniform float uShadeStrength;
 uniform sampler2D uUiMaskTex; // 1 over interface panels, which stay unlit
@@ -214,7 +216,15 @@ float depthWide(vec2 uv, float lod) {
     //
     // The lod argument is kept so the two call sites still read alike; the
     // window is fixed on the CPU side (see boxDepthField).
-    return texture(uDepthWideTex, uv).r;
+    //
+    // MINUS the shift, and the sign is the whole point: this depth describes a
+    // frame from 20-40 ms ago, the scene has moved uDepthShift native texels
+    // since, so the value belonging to what is NOW at uv was then at uv minus
+    // that. Getting it backwards doubles the error instead of removing it, and
+    // this project has already shipped a motion compensation with the sign
+    // reversed once (13.3) - tools/check_scroll_estimator.py pins the
+    // estimator's direction, and this line is the other half of that contract.
+    return texture(uDepthWideTex, uv - uDepthShift / uNativeRes).r;
 }
 
 /**
@@ -242,7 +252,10 @@ float depthWide(vec2 uv, float lod) {
  * haze's job, and it reads the absolute depth.
  */
 float depthDetail(vec2 uv, float lod) {
-    return depthWide(uv, lod) - uDepthBias * texture(uDepthBaseTex, uv).r;
+    // The base is a profile OF the depth, so it moves with it. Currently inert
+    // (uDepthBias is 0) but wrong-if-re-enabled is worse than unused.
+    return depthWide(uv, lod)
+         - uDepthBias * texture(uDepthBaseTex, uv - uDepthShift / uNativeRes).r;
 }
 
 /**
@@ -828,6 +841,7 @@ void GlRenderer::initGLResources() {
         uni_.shadeRadius = glGetUniformLocation(oesPassProgram_, "uShadeRadius");
         uni_.depthBaseTex = glGetUniformLocation(oesPassProgram_, "uDepthBaseTex");
         uni_.depthWideTex = glGetUniformLocation(oesPassProgram_, "uDepthWideTex");
+        uni_.depthShift   = glGetUniformLocation(oesPassProgram_, "uDepthShift");
         uni_.depthBias   = glGetUniformLocation(oesPassProgram_, "uDepthBias");
         uni_.shadeStrength = glGetUniformLocation(oesPassProgram_, "uShadeStrength");
         uni_.uiMaskTex   = glGetUniformLocation(oesPassProgram_, "uUiMaskTex");
@@ -962,6 +976,21 @@ void GlRenderer::aiWorkerLoop() {
     std::vector<uint8_t> localIn;
     std::vector<uint8_t> localOut;
     std::vector<uint8_t> localUiMask;
+    // Previous submitted frame, kept here rather than as a member: only this
+    // thread ever touches it, so it needs no lock and cannot be read half
+    // written by anyone else.
+    std::vector<uint8_t> prevIn;
+    int prevW = 0, prevH = 0;
+    std::chrono::steady_clock::time_point prevTime{};
+    int seedX = 0, seedY = 0;
+    float vxSmooth = 0.0f, vySmooth = 0.0f;
+    float winDx[kScrollWindow] = {0.0f};
+    float winDy[kScrollWindow] = {0.0f};
+    float winDt[kScrollWindow] = {0.0f};
+    unsigned winN = 0;
+    bool lastWasStill = false;
+    float staleMs = 0.0f;
+    float lastConf = 0.0f, lastDx = 0.0f, lastDy = 0.0f, lastDtMs = 0.0f;
 
     std::unique_lock<std::mutex> lock(aiMutex_);
     while (true) {
@@ -973,6 +1002,8 @@ void GlRenderer::aiWorkerLoop() {
         const int h = aiJobHeight_;
         const int scale = aiScale_;
         const bool wantUiMask = aiWantUiMask_;
+        const bool wantScroll = aiWantScroll_;
+        const auto jobTime = aiJobTime_;
         aiJobPending_ = false;
         aiBusy_ = true;
         lock.unlock();
@@ -988,6 +1019,108 @@ void GlRenderer::aiWorkerLoop() {
             uiPanels_.detect(localIn.data(), w, h, localUiMask);
         }
 
+        // How fast the picture is scrolling, from the two frames this thread
+        // has in hand. Here and not on the render thread for the same reason
+        // the panel detector is here: that thread holds the pipeline mutex
+        // across the whole GPU frame (10.3a) and must not grow CPU work.
+        if (ok && wantScroll) {
+            const int channels = espcnEngine_.inChannels();
+            if ((int)prevIn.size() == w * h * channels && prevW == w && prevH == h) {
+                const float dtMs = std::chrono::duration<float, std::milli>(
+                    jobTime - prevTime).count();
+                // A gap this long means the pipeline stalled or the game was
+                // paused; the two frames are not consecutive and the vector
+                // between them says nothing about the current velocity.
+                if (dtMs > 0.5f && dtMs < 200.0f) {
+                    // Radius 16, not 8. A fast scroll moves further than 8
+                    // texels between results, and beyond the search the best
+                    // in-range match is not merely unfound, it is WRONG - a
+                    // clamped vector with enough confidence to be believed.
+                    const ScrollEstimate e = estimateScroll(
+                        prevIn.data(), localIn.data(), w, h, channels, 16, seedX, seedY);
+                    if (e.confidence >= kScrollTrust) {
+                        seedX = (int)e.dx;
+                        seedY = (int)e.dy;
+                        // SUMMED OVER A WINDOW, not exponentially averaged, and
+                        // the difference is not a matter of taste.
+                        //
+                        // Each measurement is a whole number of texels because
+                        // the game renders at whole-texel scroll positions, so
+                        // it is not a rounding of the displacement - it IS the
+                        // displacement, exactly. A walk that averages 2.2
+                        // texels per interval is really a stream of 2s and 3s,
+                        // and total distance over a window is therefore exact
+                        // while any single interval is off by up to half.
+                        //
+                        // An exponential average cannot exploit that: it leaves
+                        // a permanent fraction of the per-sample noise, and on
+                        // the device at rate 0.5 that was 16% of the velocity,
+                        // which at a 32 ms age is a 1.6 texel swing in the
+                        // applied shift - measured as 1.50, 1.58, 1.60, 1.65,
+                        // 1.69, 1.69 over consecutive windows, against 1.6
+                        // predicted. That swing is the shading appearing to
+                        // advance and fall back. A window sum has no such
+                        // residual: the errors are not independent samples of a
+                        // noise process, they are the difference between a
+                        // rounded position and a real one, and it cancels.
+                        winDy[winN % kScrollWindow] = e.dy;
+                        winDx[winN % kScrollWindow] = e.dx;
+                        winDt[winN % kScrollWindow] = dtMs;
+                        ++winN;
+                        const int have = winN < kScrollWindow ? (int)winN : kScrollWindow;
+                        float sumX = 0.0f, sumY = 0.0f, sumT = 0.0f;
+                        for (int i = 0; i < have; ++i) {
+                            sumX += winDx[i];
+                            sumY += winDy[i];
+                            sumT += winDt[i];
+                        }
+                        if (sumT > 0.5f) {
+                            vxSmooth = sumX / sumT;
+                            vySmooth = sumY / sumT;
+                        }
+                        // A stop has to be immediate, and it is the one thing a
+                        // window is bad at - it would keep reporting the walk
+                        // for another 200 ms. Two confident zeroes in a row is
+                        // not ambiguous: the scene is not moving, so neither
+                        // should the correction.
+                        if (e.dx == 0.0f && e.dy == 0.0f && lastWasStill) {
+                            winN = 0;
+                            vxSmooth = vySmooth = 0.0f;
+                        }
+                        lastWasStill = (e.dx == 0.0f && e.dy == 0.0f);
+                        staleMs = 0.0f;
+                    } else {
+                        // NOT a reason to stop compensating. The scene is still
+                        // displaced from the frame the depth describes; all
+                        // this says is that THIS pair could not measure it. The
+                        // velocity is held and allowed to decay, so an
+                        // unreadable frame costs accuracy rather than switching
+                        // the correction off and snapping the shading back to
+                        // where it would have been with no compensation at all.
+                        staleMs += dtMs;
+                        if (staleMs > kScrollHoldMs) {
+                            vxSmooth *= 0.5f;
+                            vySmooth *= 0.5f;
+                            staleMs = 0.0f;
+                        }
+                    }
+                    lastConf = e.confidence;
+                    lastDx = e.dx;
+                    lastDy = e.dy;
+                    lastDtMs = dtMs;
+                }
+            }
+            prevIn = localIn;
+            prevW = w;
+            prevH = h;
+            prevTime = jobTime;
+        } else if (!wantScroll) {
+            if (!prevIn.empty()) prevIn.clear();
+            seedX = seedY = 0;
+            vxSmooth = vySmooth = 0.0f;
+        }
+
+
         lock.lock();
         aiBusy_ = false;
         if (ok) {
@@ -995,6 +1128,10 @@ void GlRenderer::aiWorkerLoop() {
             if (wantUiMask) aiUiMask_.swap(localUiMask);
             aiResultReady_ = true;
             aiLastMs_ = ms;
+            aiScrollVx_ = vxSmooth;
+            aiScrollVy_ = vySmooth;
+            aiScrollConf_ = lastConf;
+            aiResultFrameTime_ = jobTime;
         } else {
             aiFailed_ = true;
         }
@@ -1177,6 +1314,13 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             aiResultReady_ = false;
             uploadReady = true;
             stats_.aiMs = aiLastMs_;
+            // Taken with the depth, not separately: the velocity and the frame
+            // it was measured at have to describe the same result, or the
+            // compensation is extrapolating from the wrong instant.
+            depthScrollVx_ = aiScrollVx_;
+            depthScrollVy_ = aiScrollVy_;
+            depthScrollConf_ = aiScrollConf_;
+            depthFrameTime_ = aiResultFrameTime_;
 
             // Temporal average over the depth, at a FIXED rate - what it is
             // for changed, and kDepthSmoothing carries the whole account.
@@ -1307,6 +1451,11 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
             aiJobWidth_ = w;
             aiJobHeight_ = h;
             aiWantUiMask_ = yHiIsDepth_ && hd2dEnabled_;
+            aiWantScroll_ = yHiIsDepth_ && hd2dEnabled_;
+            // Stamped at submission, which is when this frame was read back -
+            // the depth that comes out describes the picture at THIS moment,
+            // and the compensation needs to know how long ago that was.
+            aiJobTime_ = std::chrono::steady_clock::now();
             aiJobPending_ = true;
         }
         aiCv_.notify_one();
@@ -1918,6 +2067,43 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // see AGENT.md 13.5 and the model repo's filter_ui_frames.py / --vflip.
     // Set this to 1.0 to bring the compensation back if that does not land.
     glUniform1f(uni_.depthBias, 0.0f);
+    // How far the scene has scrolled since the frame the current depth
+    // describes. Scaled by confidence rather than gated on it: a frame the
+    // estimator only partly explains deserves a partial correction, and a
+    // shift that snapped on and off between frames would be a new flicker in
+    // place of the one it removes.
+    {
+        float sx = 0.0f, sy = 0.0f;
+        if (hd2dEnabled_ && depthFrameTime_.time_since_epoch().count() != 0) {
+            const float ageMs = std::chrono::duration<float, std::milli>(
+                std::chrono::steady_clock::now() - depthFrameTime_).count();
+            // NOT scaled by confidence, and that was the mistake in the first
+            // version. Confidence describes how well the LATEST PAIR could be
+            // measured; it says nothing about how far the scene has moved since
+            // the depth's frame, which is what is being corrected. Multiplying
+            // the two meant one unreadable pair dropped the correction to zero
+            // and snapped the shading back to its uncompensated position -
+            // bigger and faster than the artefact it was added to remove.
+            // Confidence now gates whether the velocity is UPDATED; see the
+            // worker.
+            sx = depthScrollVx_ * ageMs;
+            sy = depthScrollVy_ * ageMs;
+            // Checked for finiteness BEFORE the clamp, because the clamp does
+            // not do it. std::min/std::max with a NaN return whichever operand
+            // the comparison happens to favour, so a NaN passes straight
+            // through a pair of them and reaches the shader, where uv - NaN
+            // makes the sample undefined and the lighting NaN - which most
+            // drivers write out as black. The overlay must degrade to
+            // transparent, never to black (section 1).
+            if (!std::isfinite(sx) || !std::isfinite(sy)) {
+                sx = 0.0f;
+                sy = 0.0f;
+            }
+            sx = std::max(-kMaxScrollShift, std::min(kMaxScrollShift, sx));
+            sy = std::max(-kMaxScrollShift, std::min(kMaxScrollShift, sy));
+        }
+        glUniform2f(uni_.depthShift, sx, sy);
+    }
     glUniform1f(uni_.shadeStrength, hd2dStrength_);
     // The sharp band sits slightly below centre: in a scene viewed from above,
     // the player and the action are usually a little under the middle of the

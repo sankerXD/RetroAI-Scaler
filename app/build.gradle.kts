@@ -128,5 +128,16 @@ val checkShadingParity = tasks.register<Exec>("checkShadingParity") {
     commandLine("python3", "${rootProject.projectDir}/tools/check_shading_parity.py")
 }
 
+// The vector the scroll estimator returns shifts the depth the lighting is
+// built from, so a wrong one does not fail loudly - it drags the shading away
+// from the picture, which looks like the artefact it exists to remove. 13.3
+// records the previous motion-compensation attempt here going in with the sign
+// reversed and being measured twice before anyone noticed.
+val checkScrollEstimator = tasks.register<Exec>("checkScrollEstimator") {
+    group = "verification"
+    description = "Checks the scroll estimator recovers known scrolls, sign included."
+    commandLine("python3", "${rootProject.projectDir}/tools/check_scroll_estimator.py")
+}
+
 tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
-    .configureEach { dependsOn(checkShaders, checkShadingParity) }
+    .configureEach { dependsOn(checkShaders, checkShadingParity, checkScrollEstimator) }
