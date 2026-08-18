@@ -19,15 +19,26 @@ OUT = os.path.join(SRC, "comparison.png")
 # Measured on all four, identical: the game area inside the letterbox.
 CONTENT = (240, 60, 1680, 1020)          # 1440x960, exactly 6x of 240x160
 
-# Panels in engine order, least to most processed.
-PANELS = [
-    # The Chinese half says something the English one does not - repeating
-    # "HD-2D" or "ESPCN 6x" in both would waste the line.
-    ("原图.png",           "Original",              "未处理"),
-    ("像素边缘重建.png",    "Pixel-edge",            "像素边缘重建"),
-    ("HD2D.png",           "HD-2D",                 "深度光影"),
-    ("ESPCN.png",          "ESPCN 6x",              "亮度超分"),
-]
+# Panels in engine order, least to most processed. The Chinese half of each
+# label says something the English one does not - repeating "HD-2D" or
+# "ESPCN 6x" in both would waste the line.
+ALL_PANELS = {
+    "original":   ("原图.png",        "Original",   "未处理"),
+    "pixel-edge": ("像素边缘重建.png", "Pixel-edge", "像素边缘重建"),
+    "hd2d":       ("HD2D.png",        "HD-2D",      "深度光影"),
+    "espcn":      ("ESPCN.png",       "ESPCN 6x",   "亮度超分"),
+}
+
+# THREE COLUMNS, NOT FOUR. GitHub renders a README image at about 890 px wide,
+# so a four-column strip arrives at roughly 220 px per panel and nothing in it
+# can be read without clicking through. Three is about 290.
+#
+# Which three is a real choice. Dropping "original" loses the before, and three
+# processed engines side by side look much alike to anyone who has not used
+# them; dropping "pixel-edge" instead keeps the baseline and costs little,
+# since HD-2D IS pixel-edge with the lighting on top.
+SHOW = ["pixel-edge", "hd2d", "espcn"]
+PANELS = [ALL_PANELS[k] for k in SHOW]
 
 COL_W = 600                               # width of one column
 COL_H = COL_W * 960 // 1440               # full frame, keeping 3:2
