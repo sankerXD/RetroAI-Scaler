@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One group of controls. Sections used to be separated by hairline rules, which
+  gave every heading the same weight as every divider and left the panel reading
+  as one long undifferentiated list. A filled block per group is what makes the
+  structure visible without adding a single line of chrome.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface_section" />
+    <corners android:radius="12dp" />
+</shape>

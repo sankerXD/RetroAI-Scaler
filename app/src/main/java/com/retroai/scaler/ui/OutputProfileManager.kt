@@ -80,6 +80,18 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      * problem rather than a regression problem.
      */
     PIXEL_EDGE("像素边缘重建", null),
+
+    /**
+     * A LOOK, not a network: pixel-edge reconstruction with the depth-driven
+     * lighting, the tilt-shift focus band and the bloom all switched on at the
+     * levels that were settled on the device (75 / 50 / 25).
+     *
+     * It sits in the engine list because that is what the player is choosing
+     * between - one picture or another - and because every one of its parts was
+     * a separate switch with its own slider for as long as they were being
+     * tuned, which is not a decision anyone should have to make twice.
+     */
+    HD2D("HD-2D 光影", null),
     SHADER("GPU 锐化", null),
     ESPCN_FAST("ESPCN Fast", "fast"),
     ESPCN_HQ("ESPCN HQ", "hq"),
@@ -101,6 +113,14 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      * ESPCN models stay: they are far cheaper and remain the right choice on
      * weaker hardware.
      */
+    /**
+     * HIDDEN from the menu. Section 12.2 measured the repaint route out on
+     * pixel art: the teacher only changes anything where the artist drew a hard
+     * edge, and that is exactly where its changes are damage. Kept in the enum
+     * rather than deleted because that verdict was specific to sprite art -
+     * PS1 and arcade material, with real gradients and dithering, is where it
+     * would earn its place, and the weights ship already.
+     */
     RETROAI("RetroAI（重绘 · 需旗舰 GPU）", "retroai"),
 
     /**
@@ -117,10 +137,26 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      */
     DEPTH("深度图（调试）", "depth");
 
+    /**
+     * Not offered in the menu. Both are reachable by setting the engine
+     * directly, which is what they are for - one is a diagnostic, the other is
+     * a route that was measured out for this content.
+     */
+    val isHidden: Boolean get() = this == RETROAI || this == DEPTH
+
     val usesNetwork: Boolean get() = assetVariant != null
     /** Ultra and RetroAI are both unusable without GPU inference. */
     val needsGpu: Boolean get() = this == ESPCN_ULTRA || this == RETROAI
-    val isPixelEdge: Boolean get() = this == PIXEL_EDGE
+    /** HD-2D draws with the pixel-edge reconstruction and lights the result. */
+    val isPixelEdge: Boolean get() = this == PIXEL_EDGE || this == HD2D
+
+    /**
+     * The lighting, focus band and bloom that come with this engine. Anything
+     * else clears them, so switching engines cannot leave a stray effect on.
+     */
+    val hd2dStrength: Float get() = if (this == HD2D) 0.75f else 0.0f
+    val dofStrength: Float get() = if (this == HD2D) 0.50f else 0.0f
+    val bloomStrength: Float get() = if (this == HD2D) 0.25f else 0.0f
 
     /** Anything past the ESPCN family takes full RGB in. */
     val modelInChannels: Int get() = if (this == ESPCN_FAST || this == ESPCN_HQ ||
@@ -463,8 +499,11 @@ object ProfilePreference {
         return RenderProfile(
             console = console,
             isAiEnabled = p.getBoolean(key(console, "aiEnabled"), true),
+            // A stored engine that is no longer offered falls back rather than
+            // leaving the menu showing one thing and the renderer doing another.
             engine = runCatching {
                 UpscaleEngine.valueOf(p.getString(key(console, "engine"), "PIXEL_EDGE")!!)
+                    .takeUnless { it.isHidden } ?: UpscaleEngine.PIXEL_EDGE
             }.getOrDefault(UpscaleEngine.PIXEL_EDGE),
             aiScale = runCatching {
                 AiScale.valueOf(p.getString(key(console, "aiScale"), "X3")!!)

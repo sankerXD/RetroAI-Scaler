@@ -5,7 +5,14 @@
     <color name="background_dark">#121418</color>
     <color name="surface_card">#1E222B</color>
     <color name="surface_card_border">#2C3240</color>
-    <color name="surface_floating">#E6181B22</color>
+    <color name="surface_floating">#F2141720</color>
+    <!-- One shade above the panel, so a group of controls reads as a block
+         rather than needing a rule drawn round it. -->
+    <color name="surface_section">#1C202A</color>
+    <color name="surface_hud">#12151C</color>
+    <!-- The accent carries the ACTIVE state and nothing else. Using it for
+         headings too left nothing to distinguish what was switched on. -->
+    <color name="text_label">#6B7A90</color>
     <color name="text_primary">#F0F4F8</color>
     <color name="text_secondary">#94A3B8</color>
     <color name="text_accent">#00E5FF</color>

@@ -8,4 +8,20 @@
         <item name="android:navigationBarColor">@color/background_dark</item>
         <item name="android:windowBackground">@color/background_dark</item>
     </style>
+
+    <!-- A small, letter-spaced, muted label. Section headings were bold accent
+         text at body size, which made them compete with the controls they were
+         naming; an eyebrow reads as structure instead. -->
+    <style name="MenuSectionLabel">
+        <item name="android:textColor">@color/text_label</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.14</item>
+        <item name="android:layout_marginBottom">8dp</item>
+    </style>
+
+    <style name="MenuFieldLabel">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">12sp</item>
+    </style>
 </resources>

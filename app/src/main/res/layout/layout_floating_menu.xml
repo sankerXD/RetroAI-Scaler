@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_floating_menu"
-    android:padding="16dp"
+    android:padding="14dp"
     android:scrollbars="none">
 
     <LinearLayout
@@ -12,7 +12,6 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- Title Bar -->
         <RelativeLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
@@ -22,33 +21,37 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/menu_title"
-                android:textColor="@color/primary"
-                android:textSize="16sp"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <ImageView
                 android:id="@+id/btnCloseMenu"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
                 android:layout_alignParentEnd="true"
                 android:padding="4dp"
                 android:src="@android:drawable/ic_menu_close_clear_cancel"
                 app:tint="@color/text_secondary" />
         </RelativeLayout>
 
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
-            android:text="AI 超分倍率"
-            android:textColor="@color/text_primary"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+            android:background="@drawable/bg_menu_section"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                style="@style/MenuSectionLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="画面" />
 
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
             android:scrollbars="none">
 
             <com.google.android.material.chip.ChipGroup
@@ -109,136 +112,31 @@
             </com.google.android.material.chip.ChipGroup>
         </HorizontalScrollView>
 
-        <!-- Section 3: AI Engine & Pipeline Settings -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginVertical="10dp"
-            android:background="@color/surface_card_border" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="⚡ AI 渲染管线配置"
-            android:textColor="@color/text_primary"
-            android:textSize="13sp"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/btnDetectSource"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="6dp"
-            android:text="🎯 自动探测游戏画面位置"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            app:strokeColor="@color/primary" />
-
-        <!--
-          Corpus capture. Lives next to the detect controls because it depends
-          on the same measured capture window: the grab is only lossless while
-          that rect is an exact integer multiple of the native resolution.
-        -->
-        <Button
-            android:id="@+id/btnCaptureFrame"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="6dp"
-            android:text="截取原生帧（长按连拍）"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            app:strokeColor="@color/primary" />
-
-        <Button
-            android:id="@+id/btnAutoCapture"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="6dp"
-            android:text="开始自动采集"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            app:strokeColor="@color/primary" />
-
-        <!--
-          Draws a pink ring around where the app BELIEVES the capture window
-          sits. The renderer has always been able to draw it, but nothing ever
-          exposed the toggle, so the one control that shows whether the sampled
-          rect matches RetroArch's actual viewport was unreachable.
-        -->
-        <Button
-            android:id="@+id/btnHd2d"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="6dp"
-            android:text="HD-2D 光影：关（长按调强度）"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            app:strokeColor="@color/primary" />
-
-        <Button
-            android:id="@+id/btnDof"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="6dp"
-            android:text="移轴景深：关（长按调强度）"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            app:strokeColor="@color/primary" />
-
-        <Button
-            android:id="@+id/btnBloom"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="6dp"
-            android:text="泛光：关（长按调强度）"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            app:strokeColor="@color/primary" />
-
-        <Button
-            android:id="@+id/btnToggleGuide"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="6dp"
-            android:text="显示取景框"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            app:strokeColor="@color/primary" />
-
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="启用 AI ESPCN 超分"
-                android:textColor="@color/text_primary"
-                android:textSize="13sp" />
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/switchAiEnable"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:checked="true" />
-        </LinearLayout>
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="启用 AI 超分"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchAiEnable"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true" />
+            </LinearLayout>
 
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
             android:scrollbars="none">
 
             <com.google.android.material.chip.ChipGroup
@@ -255,6 +153,18 @@
                     android:layout_height="wrap_content"
                     android:checked="true"
                     android:text="像素边缘重建"
+                    android:textColor="@color/chip_text_color"
+                    app:checkedIconVisible="false"
+                    app:chipBackgroundColor="@color/chip_bg_color"
+                    app:chipStrokeColor="@color/chip_stroke_color"
+                    app:chipStrokeWidth="1.5dp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipEngineHd2d"
+                    style="@style/Widget.MaterialComponents.Chip.Choice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="HD-2D 光影"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"
@@ -296,7 +206,8 @@
                     app:chipBackgroundColor="@color/chip_bg_color"
                     app:chipStrokeColor="@color/chip_stroke_color"
                     app:chipStrokeWidth="1.5dp" />
-            <com.google.android.material.chip.Chip
+
+                <com.google.android.material.chip.Chip
                     android:id="@+id/chipEngineEspcnUltra"
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
@@ -307,94 +218,99 @@
                     app:chipBackgroundColor="@color/chip_bg_color"
                     app:chipStrokeColor="@color/chip_stroke_color"
                     app:chipStrokeWidth="1.5dp" />
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipEngineRetroAi"
-                    style="@style/Widget.MaterialComponents.Chip.Choice"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="RetroAI 重绘"
-                    android:textColor="@color/chip_text_color"
-                    app:checkedIconVisible="false"
-                    app:chipBackgroundColor="@color/chip_bg_color"
-                    app:chipStrokeColor="@color/chip_stroke_color"
-                    app:chipStrokeWidth="1.5dp" />
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipEngineDepth"
-                    style="@style/Widget.MaterialComponents.Chip.Choice"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="深度图"
-                    android:textColor="@color/chip_text_color"
-                    app:checkedIconVisible="false"
-                    app:chipBackgroundColor="@color/chip_bg_color"
-                    app:chipStrokeColor="@color/chip_stroke_color"
-                    app:chipStrokeWidth="1.5dp" />
-
-                </com.google.android.material.chip.ChipGroup>
+            </com.google.android.material.chip.ChipGroup>
         </HorizontalScrollView>
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginVertical="10dp"
-            android:background="@color/surface_card_border" />
-
-        <Button
-            android:id="@+id/btnRestoreRaConfig"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="38dp"
-            android:text="还原 RetroArch 配置"
-            android:textColor="@color/accent_orange"
-            android:textSize="12sp"
-            app:strokeColor="@color/accent_orange" />
-
-        <!-- Section 5: Retro Shaders (Scanline / LCD Grid) -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginVertical="10dp"
-            android:background="@color/surface_card_border" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="📺 复古质感模拟 (GPU Pass)"
-            android:textColor="@color/text_primary"
-            android:textSize="13sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tvScanlineLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="CRT 扫描线强度: 0%"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp" />
-
-        <SeekBar
-            android:id="@+id/seekbarScanline"
+        </LinearLayout>
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:max="100"
-            android:progress="0" />
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_menu_section"
+            android:orientation="vertical"
+            android:padding="12dp">
 
-        <TextView
-            android:layout_width="wrap_content"
+            <TextView
+                style="@style/MenuSectionLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="取景" />
+
+            <Button
+                android:id="@+id/btnDetectSource"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:text="自动探测游戏画面位置"
+                android:textColor="@color/primary"
+                android:textSize="12sp"
+                app:strokeColor="@color/primary" />
+            <Button
+                android:id="@+id/btnToggleGuide"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginTop="6dp"
+                android:text="显示取景框"
+                android:textColor="@color/primary"
+                android:textSize="12sp"
+                app:strokeColor="@color/primary" />
+            <Button
+                android:id="@+id/btnRestoreRaConfig"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginTop="6dp"
+                android:text="还原 RetroArch 配置"
+                android:textColor="@color/accent_orange"
+                android:textSize="12sp"
+                app:strokeColor="@color/accent_orange" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="遮罩类型"
-            android:textColor="@color/text_primary"
-            android:textSize="13sp"
-            android:textStyle="bold" />
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_menu_section"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <TextView
+                style="@style/MenuSectionLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="复古质感模拟" />
+
+            <TextView
+                android:id="@+id/tvScanlineLabel"
+                style="@style/MenuFieldLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CRT 扫描线强度  0%" />
+
+            <SeekBar
+                android:id="@+id/seekbarScanline"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="0" />
+
+            <TextView
+                android:id="@+id/tvLcdGridLabel"
+                style="@style/MenuFieldLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="遮罩强度  0%" />
+
+            <SeekBar
+                android:id="@+id/seekbarLcdGrid"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="15" />
 
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
             android:scrollbars="none">
 
             <com.google.android.material.chip.ChipGroup
@@ -422,7 +338,7 @@
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="光栅 Aperture"
+                    android:text="Aperture"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"
@@ -434,7 +350,7 @@
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="荫罩 Shadow"
+                    android:text="Shadow"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"
@@ -446,7 +362,7 @@
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="狭缝 Slot"
+                    android:text="Slot"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"
@@ -454,46 +370,27 @@
                     app:chipStrokeWidth="1.5dp" />
             </com.google.android.material.chip.ChipGroup>
         </HorizontalScrollView>
-
-        <TextView
-            android:id="@+id/tvLcdGridLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="RGB 三元组 (LCD 子像素): 0%"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp" />
-
-        <SeekBar
-            android:id="@+id/seekbarLcdGrid"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="100"
-            android:progress="15" />
-
-        <!-- Performance Stats Monitor HUD -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginVertical="10dp"
-            android:background="@color/surface_card_border" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/tvPerformanceHud"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_badge"
-            android:text="FPS: -- | Capture: -- | AI: -- | Total: --"
-            android:textColor="@color/text_primary"
-            android:textSize="11sp" />
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_menu_hud"
+            android:fontFamily="monospace"
+            android:padding="8dp"
+            android:text="FPS --   CAPTURE --   AI --   TOTAL --"
+            android:textColor="@color/text_secondary"
+            android:textSize="10sp" />
 
         <Button
             android:id="@+id/btnStopService"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="40dp"
-            android:layout_marginTop="8dp"
-            android:text="⏹ 停止 AI 增强"
+            android:layout_marginTop="10dp"
+            android:text="停止 AI 增强"
             android:textColor="@color/accent_red"
             android:textSize="13sp"
             app:strokeColor="@color/accent_red" />

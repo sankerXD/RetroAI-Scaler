@@ -83,6 +83,12 @@ class FloatingBallManager(
         Thread(r, "DatasetCapture").apply { isDaemon = true }
     }
     private var isAutoCapturing = false
+    /**
+     * The corpus capture controls are no longer on the panel - the dataset is
+     * collected, and the buttons were developer tooling in a player-facing
+     * menu. The machinery below stays reachable so a future collection run
+     * needs a layout entry back, not a rewrite.
+     */
     private var captureButton: Button? = null
     private var autoCaptureButton: Button? = null
     private var lastCaptureMessage: String? = null
@@ -183,6 +189,10 @@ class FloatingBallManager(
      * config pushes are no-ops before nativeInit).
      */
     fun pushAllSettings() {
+        // The engine owns its effects, including across a restart: a profile
+        // saved while the lighting was still a separate switch would otherwise
+        // come back with an effect on that the current engine does not carry.
+        applyEnginePreset()
         applyEngine()
         applyRenderProfile()
     }
@@ -421,115 +431,19 @@ class FloatingBallManager(
                 if (checkedIds.isEmpty()) return@setOnCheckedStateChangeListener
                 profile.engine = when (checkedIds.first()) {
                     R.id.chipEnginePixelEdge -> UpscaleEngine.PIXEL_EDGE
+                    R.id.chipEngineHd2d -> UpscaleEngine.HD2D
                     R.id.chipEngineShader -> UpscaleEngine.SHADER
                     R.id.chipEngineEspcnFast -> UpscaleEngine.ESPCN_FAST
                     R.id.chipEngineEspcnHq -> UpscaleEngine.ESPCN_HQ
                     R.id.chipEngineEspcnUltra -> UpscaleEngine.ESPCN_ULTRA
-                    R.id.chipEngineRetroAi -> UpscaleEngine.RETROAI
-                    R.id.chipEngineDepth -> UpscaleEngine.DEPTH
                     else -> profile.engine
                 }
+                applyEnginePreset()
                 applyEngine()
                 applyRenderProfile()
             }
 
-        root.findViewById<Button>(R.id.btnCaptureFrame).apply {
-            captureButton = this
-            updateCaptureButtonText()
-            setOnClickListener { captureCorpusFrame(skipSimilar = false) }
-            // Long press for a burst: the transient stuff cannot be caught any
-            // other way, and it needs no second control this way.
-            setOnLongClickListener { startBurst(); true }
-        }
-
-        root.findViewById<Button>(R.id.btnAutoCapture).apply {
-            autoCaptureButton = this
-            updateAutoCaptureText(this)
-            setOnClickListener {
-                isAutoCapturing = !isAutoCapturing
-                updateAutoCaptureText(this)
-                if (isAutoCapturing) {
-                    mainHandler.post(autoCaptureRunnable)
-                    Toast.makeText(
-                        context,
-                        "开始自动采集，每 2 秒一张\n相似画面会自动跳过\n" + recorder.outputPathFor(profile.console),
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    mainHandler.removeCallbacks(autoCaptureRunnable)
-                    Toast.makeText(
-                        context,
-                        "已停止，共 ${recorder.countFor(profile.console)} 张",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }
-
-        root.findViewById<Button>(R.id.btnHd2d).apply {
-            updateHd2dText(this)
-            setOnLongClickListener {
-                // Cycles the strength rather than adding a slider: four steps
-                // is enough to find the level, and the menu is already long.
-                val steps = listOf(0.25f, 0.5f, 0.75f, 1.0f)
-                val next = steps.firstOrNull { it > profile.hd2dStrength + 0.01f } ?: steps.first()
-                profile.hd2dStrength = next
-                profile.hd2dEnabled = true
-                updateHd2dText(this)
-                applyEngine()
-                applyRenderProfile()
-                true
-            }
-            setOnClickListener {
-                profile.hd2dEnabled = !profile.hd2dEnabled
-                updateHd2dText(this)
-                // The depth net has to be loaded for HD-2D and dropped when it
-                // is off - it is the only thing in the pass that costs anything.
-                applyEngine()
-                applyRenderProfile()
-            }
-        }
-
-        root.findViewById<Button>(R.id.btnDof).apply {
-            updateDofText(this)
-            setOnLongClickListener {
-                val steps = listOf(0.25f, 0.5f, 0.75f, 1.0f)
-                val next = steps.firstOrNull { it > profile.dofStrength + 0.01f } ?: steps.first()
-                profile.dofStrength = next
-                updateDofText(this)
-                applyRenderProfile()
-                true
-            }
-            setOnClickListener {
-                // No model to load or drop - the focus band needs no depth, so
-                // unlike HD-2D this is a uniform and nothing else.
-                profile.dofStrength = if (profile.dofStrength > 0.001f) 0.0f else 0.5f
-                updateDofText(this)
-                applyRenderProfile()
-            }
-        }
-
-        root.findViewById<Button>(R.id.btnBloom).apply {
-            updateBloomText(this)
-            setOnLongClickListener {
-                val steps = listOf(0.25f, 0.5f, 0.75f, 1.0f)
-                val next = steps.firstOrNull { it > profile.bloomStrength + 0.01f } ?: steps.first()
-                profile.bloomStrength = next
-                updateBloomText(this)
-                applyRenderProfile()
-                true
-            }
-            setOnClickListener {
-                // 25%, not 50%. Judged on the handheld: at half strength the
-                // highlights spread far enough to read as haze over the picture
-                // rather than as light coming off it.
-                profile.bloomStrength = if (profile.bloomStrength > 0.001f) 0.0f else 0.25f
-                updateBloomText(this)
-                applyRenderProfile()
-            }
-        }
-
-        root.findViewById<Button>(R.id.btnToggleGuide).apply {
+                                                root.findViewById<Button>(R.id.btnToggleGuide).apply {
             updateGuideButtonText(this)
             setOnClickListener {
                 profile.showSourceGuide = !profile.showSourceGuide
@@ -554,13 +468,13 @@ class FloatingBallManager(
 
         // 5. Retro Shaders
         val tvScanline = root.findViewById<TextView>(R.id.tvScanlineLabel)
-        tvScanline.text = "CRT 扫描线强度: ${(profile.scanlineIntensity * 100).toInt()}%"
+        tvScanline.text = "CRT 扫描线强度  ${(profile.scanlineIntensity * 100).toInt()}%"
         root.findViewById<SeekBar>(R.id.seekbarScanline).apply {
             progress = (profile.scanlineIntensity * 100).toInt()
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     profile.scanlineIntensity = progress / 100f
-                    tvScanline.text = "CRT 扫描线强度: $progress%"
+                    tvScanline.text = "CRT 扫描线强度  $progress%"
                     applyRenderProfile()
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -607,6 +521,19 @@ class FloatingBallManager(
      * Loads (or drops) the ncnn weights for the selected engine, and switches
      * the shader's edge-reconstruction path on or off.
      */
+    /**
+     * The engine carries its own effects. HD-2D is a bundle - the lighting, the
+     * focus band and the bloom at the levels settled on the device - and every
+     * other engine clears all three, so choosing one can never leave a stray
+     * effect running from a previous choice.
+     */
+    private fun applyEnginePreset() {
+        profile.hd2dEnabled = profile.engine.hd2dStrength > 0f
+        profile.hd2dStrength = profile.engine.hd2dStrength
+        profile.dofStrength = profile.engine.dofStrength
+        profile.bloomStrength = profile.engine.bloomStrength
+    }
+
     private fun applyEngine() {
         // Cheap uniform writes stay here: they take the pipeline mutex for a
         // fraction of a frame, not for a Vulkan bring-up.
@@ -751,26 +678,6 @@ class FloatingBallManager(
         }
     }
 
-    private fun updateBloomText(button: Button) {
-        button.text = if (profile.bloomStrength > 0.001f)
-            "泛光：开　${(profile.bloomStrength * 100).toInt()}%"
-        else
-            "泛光：关（长按调强度）"
-    }
-
-    private fun updateDofText(button: Button) {
-        button.text = if (profile.dofStrength > 0.001f)
-            "移轴景深：开　${(profile.dofStrength * 100).toInt()}%"
-        else
-            "移轴景深：关（长按调强度）"
-    }
-
-    private fun updateHd2dText(button: Button) {
-        button.text = if (profile.hd2dEnabled)
-            "HD-2D 光影：开　${(profile.hd2dStrength * 100).toInt()}%"
-        else "HD-2D 光影：关"
-    }
-
     private fun updateGuideButtonText(button: Button) {
         button.text = if (profile.showSourceGuide) "隐藏取景框" else "显示取景框"
     }
@@ -784,8 +691,9 @@ class FloatingBallManager(
                 UpscaleEngine.ESPCN_FAST -> R.id.chipEngineEspcnFast
                 UpscaleEngine.ESPCN_HQ -> R.id.chipEngineEspcnHq
                 UpscaleEngine.ESPCN_ULTRA -> R.id.chipEngineEspcnUltra
-                UpscaleEngine.RETROAI -> R.id.chipEngineRetroAi
-                UpscaleEngine.DEPTH -> R.id.chipEngineDepth
+                // Not offered in the menu; nothing to check.
+                UpscaleEngine.HD2D -> R.id.chipEngineHd2d
+                else -> R.id.chipEnginePixelEdge
             }
         )
     }
@@ -831,8 +739,9 @@ class FloatingBallManager(
                 UpscaleEngine.ESPCN_FAST -> R.id.chipEngineEspcnFast
                 UpscaleEngine.ESPCN_HQ -> R.id.chipEngineEspcnHq
                 UpscaleEngine.ESPCN_ULTRA -> R.id.chipEngineEspcnUltra
-                UpscaleEngine.RETROAI -> R.id.chipEngineRetroAi
-                UpscaleEngine.DEPTH -> R.id.chipEngineDepth
+                // Not offered in the menu; nothing to check.
+                UpscaleEngine.HD2D -> R.id.chipEngineHd2d
+                else -> R.id.chipEnginePixelEdge
             }
         )
         root.findViewById<SwitchMaterial>(R.id.switchAiEnable).isChecked = profile.isAiEnabled
@@ -1014,7 +923,7 @@ class FloatingBallManager(
     }
 
     private fun triadLabel(value: Float): String =
-        "荫罩强度: ${(value * 100).toInt()}%"
+        "遮罩强度  ${(value * 100).toInt()}%"
 
     private fun applyRenderProfile() {
         nativeBridge.nativeSetMaskType(profile.maskType.id)
