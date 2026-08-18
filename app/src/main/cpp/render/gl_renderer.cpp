@@ -465,7 +465,11 @@ void main() {
     // away. Panels stay sharp via the same mask that keeps the light off them.
     if (uDofStrength > 0.001) {
         float dof = dofAmount(uv) * uDofStrength;
-        dof *= 1.0 - texture(uUiMaskTex, uv).r;
+        // Decisive, not proportional. The mask is feathered so the LIGHTING
+        // boundary cannot become an outline, but a half-defocused dialogue box
+        // does not read as soft - it reads as glass. Anything meaningfully
+        // inside a panel stays fully sharp.
+        dof *= 1.0 - smoothstep(0.08, 0.35, texture(uUiMaskTex, uv).r);
         if (dof > 0.002) {
             resultColor = mix(resultColor, sourceBokeh(uv, dof * uDofRadius), dof);
         }

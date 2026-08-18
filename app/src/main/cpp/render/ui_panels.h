@@ -66,7 +66,17 @@ private:
      * finding boxes in scene art.
      */
     static constexpr int kMinWidth = 24;
-    static constexpr int kMinHeight = 10;
+    /**
+     * 6, not 10: a status bar is thinner than a dialogue box. The HP/SP/SOUL
+     * strip on the handheld measures six rows, so a floor of ten rejected the
+     * whole HUD and the tilt-shift softened it into glass. Over the corpus this
+     * costs almost nothing - mean coverage 17.5% to 18.1%.
+     *
+     * Relaxing the end-matching rule instead was tried and is far worse: mean
+     * coverage jumps to 29% and a quarter of all frames end up more than half
+     * masked, which switches the lighting and the focus band off wholesale.
+     */
+    static constexpr int kMinHeight = 6;
     /** Fraction of the panel's height its side borders must span. */
     static constexpr float kSideCover = 0.55f;
     /** How far the two horizontal runs may disagree at their ends. */
