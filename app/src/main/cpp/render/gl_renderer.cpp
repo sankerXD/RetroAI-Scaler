@@ -991,9 +991,6 @@ void GlRenderer::aiWorkerLoop() {
     bool lastWasStill = false;
     float staleMs = 0.0f;
     float lastConf = 0.0f, lastDx = 0.0f, lastDy = 0.0f, lastDtMs = 0.0f;
-    int traceDy[16] = {0};
-    int traceDx[16] = {0};
-    unsigned traceN = 0;
 
     std::unique_lock<std::mutex> lock(aiMutex_);
     while (true) {
@@ -1123,29 +1120,6 @@ void GlRenderer::aiWorkerLoop() {
             vxSmooth = vySmooth = 0.0f;
         }
 
-        // DENSE trace, compacted so it can actually be read off a handheld.
-        // The previous version logged one result in sixty - about one sample
-        // every 1.7 s - and the artefact being chased happens between frames,
-        // so it could not possibly show up. This keeps the last sixteen
-        // measured displacements and prints them as one line, which is the
-        // fine structure at a paste-able density: whether a slow walk scrolls
-        // steadily (1,2,1,2,...) or in bursts (0,0,3,0,0,3,...) decides
-        // whether a velocity model can work here at all.
-        if (wantScroll) {
-            traceDy[traceN % 16] = (int)lastDy;
-            traceDx[traceN % 16] = (int)lastDx;
-            ++traceN;
-            if (traceN % 16 == 0) {
-                char buf[192];
-                int at = 0;
-                for (int i = 0; i < 16 && at < (int)sizeof(buf) - 8; ++i) {
-                    at += snprintf(buf + at, sizeof(buf) - at, "%d,", traceDy[i]);
-                }
-                if (at > 0) buf[at - 1] = '\0';
-                ALOGI("Sdy[%s] dx=%d v=%.4f c=%.2f dt=%.1f stale=%.0f",
-                      buf, traceDx[15], vySmooth, lastConf, lastDtMs, staleMs);
-            }
-        }
 
         lock.lock();
         aiBusy_ = false;
@@ -2100,11 +2074,9 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     // place of the one it removes.
     {
         float sx = 0.0f, sy = 0.0f;
-        float ageMsForLog = 0.0f;
         if (hd2dEnabled_ && depthFrameTime_.time_since_epoch().count() != 0) {
             const float ageMs = std::chrono::duration<float, std::milli>(
                 std::chrono::steady_clock::now() - depthFrameTime_).count();
-            ageMsForLog = ageMs;
             // NOT scaled by confidence, and that was the mistake in the first
             // version. Confidence describes how well the LATEST PAIR could be
             // measured; it says nothing about how far the scene has moved since
@@ -2116,30 +2088,21 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
             // worker.
             sx = depthScrollVx_ * ageMs;
             sy = depthScrollVy_ * ageMs;
+            // Checked for finiteness BEFORE the clamp, because the clamp does
+            // not do it. std::min/std::max with a NaN return whichever operand
+            // the comparison happens to favour, so a NaN passes straight
+            // through a pair of them and reaches the shader, where uv - NaN
+            // makes the sample undefined and the lighting NaN - which most
+            // drivers write out as black. The overlay must degrade to
+            // transparent, never to black (section 1).
+            if (!std::isfinite(sx) || !std::isfinite(sy)) {
+                sx = 0.0f;
+                sy = 0.0f;
+            }
             sx = std::max(-kMaxScrollShift, std::min(kMaxScrollShift, sx));
             sy = std::max(-kMaxScrollShift, std::min(kMaxScrollShift, sy));
         }
         glUniform2f(uni_.depthShift, sx, sy);
-
-        // The APPLIED shift, which is the quantity the player is actually
-        // looking at - the worker's trace above says what was measured, this
-        // says what reached the shader. Reported as the swing over a window
-        // rather than per frame: the artefact is that this quantity jumps, so
-        // its min and max over half a second IS the measurement, and 60 lines
-        // a second is not readable off a handheld.
-        if (hd2dEnabled_) {
-            shiftMin_ = std::min(shiftMin_, sy);
-            shiftMax_ = std::max(shiftMax_, sy);
-            shiftSum_ += sy;
-            shiftAge_ += ageMsForLog;
-            if (++shiftN_ >= 30) {
-                ALOGI("Shift: sy %.2f..%.2f (swing %.2f) mean %.2f  age mean %.1fms",
-                      shiftMin_, shiftMax_, shiftMax_ - shiftMin_,
-                      shiftSum_ / shiftN_, shiftAge_ / shiftN_);
-                shiftMin_ = 1e9f; shiftMax_ = -1e9f;
-                shiftSum_ = 0.0f; shiftAge_ = 0.0f; shiftN_ = 0;
-            }
-        }
     }
     glUniform1f(uni_.shadeStrength, hd2dStrength_);
     // The sharp band sits slightly below centre: in a scene viewed from above,
