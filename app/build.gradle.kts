@@ -52,15 +52,39 @@ android {
             keyAlias = "Sanker"
             keyPassword = "android"
         }
+
+        // Release signing comes from the environment and NOWHERE else.
+        //
+        // There is deliberately no fallback. A missing variable leaves this
+        // config empty and the build graph check below fails the build, because
+        // the alternative - quietly signing a release with the committed debug
+        // key - produces an APK that looks fine, installs fine, and is signed
+        // with a private key that is public in this repository.
+        create("release") {
+            val keystore = System.getenv("SIGNING_KEYSTORE_FILE")
+            if (!keystore.isNullOrBlank()) {
+                storeFile = file(keystore)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            // R8 stays OFF for now. Turning it on has to be preceded by
+            // verifying that the JNI entry points
+            // (Java_com_retroai_scaler_jni_NativeBridge_*) and ncnn's
+            // reflective paths survive shrinking - that is a device round trip
+            // of its own and does not belong in the same change as the first
+            // signed build.
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             isMinifyEnabled = false
@@ -141,3 +165,44 @@ val checkScrollEstimator = tasks.register<Exec>("checkScrollEstimator") {
 
 tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
     .configureEach { dependsOn(checkShaders, checkShadingParity, checkScrollEstimator) }
+
+// Refuse to assemble a release without real signing credentials.
+//
+// Checked on the task graph rather than in a doFirst: assembleRelease is a
+// lifecycle task, so its own doFirst runs AFTER packaging has already produced
+// the APK - far too late to stop anything. whenReady fires before the first
+// task executes, and only when a release assembly is actually being asked for,
+// so debug builds are unaffected.
+//
+// Losing this key means never being able to update an installed user again -
+// the signature will not match, so their only route is uninstall and lose
+// their saves. That is the asymmetry that makes "fail loudly" the only
+// acceptable behaviour here.
+gradle.taskGraph.whenReady {
+    val assemblingRelease = allTasks.any {
+        (it.name.startsWith("assemble") || it.name.startsWith("bundle")) &&
+            it.name.endsWith("Release")
+    }
+    if (!assemblingRelease) return@whenReady
+
+    val required = listOf(
+        "SIGNING_KEYSTORE_FILE",
+        "SIGNING_STORE_PASSWORD",
+        "SIGNING_KEY_ALIAS",
+        "SIGNING_KEY_PASSWORD"
+    )
+    val missing = required.filter { System.getenv(it).isNullOrBlank() }
+    if (missing.isNotEmpty()) {
+        throw GradleException(
+            "Release signing is not configured - refusing to build an unsigned " +
+                "or debug-signed release. Missing: ${missing.joinToString(", ")}. " +
+                "In CI these come from the repository secrets; locally, export " +
+                "them (SIGNING_KEYSTORE_FILE is a path to the .jks). " +
+                "Use assembleDebug if you only wanted a build."
+        )
+    }
+    val keystore = file(System.getenv("SIGNING_KEYSTORE_FILE"))
+    if (!keystore.isFile) {
+        throw GradleException("SIGNING_KEYSTORE_FILE does not exist: $keystore")
+    }
+}

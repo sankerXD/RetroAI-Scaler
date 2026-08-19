@@ -230,6 +230,15 @@ ReLU 折进卷积（param 9=1），比独立层快
 JAVA_HOME=<jdk17+> ./gradlew assembleDebug
 ```
 
+> **Homebrew 的 `openjdk` 是 keg-only，装了也不在 PATH 上。** `/Library/Java/JavaVirtualMachines/` 是空的时候，`/usr/bin/java` 和 `/usr/bin/keytool` 这两个苹果转发壳会报 "Unable to locate a Java Runtime"——JDK 明明装着。一次性修好：
+>
+> ```bash
+> sudo ln -sfn /opt/homebrew/opt/openjdk/libexec/openjdk.jdk \
+>     /Library/Java/JavaVirtualMachines/openjdk.jdk
+> ```
+>
+> 之后 `keytool`、`/usr/libexec/java_home` 和 Gradle 都能自己找到它，不用再显式带 `JAVA_HOME=`。**本机是 JDK 22，CI 是 Temurin 17**，项目 target 17；到目前为止没出过问题，但"本机过 CI 不过"这类怪事第一个该怀疑它。
+
 **三项检查在构建期跑**（都已接进 Gradle）：
 
 - `tools/check_shaders.py` —— 编译内嵌的 GLSL；
@@ -282,11 +291,33 @@ HD-2D 自己的已知限制（都在第 13 节有数据）：
 
 **9.3 已完成**（ESPCN 补到 2/3/4/6 四档，见第 5 节；重绘路线在 12.2 被否掉，代码已从模型仓库删除）。剩下两项，按可以独立开工的顺序写。
 
-### 9.1 Release 包签名
+### 9.1 Release 包签名（已完成）
 
-现状：只出 debug 包，用仓库里固定的 `debug.keystore`（别名 `Sanker`，口令 `android`）。它被提交是**有意为之**——本机和 CI 共用一个签名，包才能互相覆盖安装；换签名会导致 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，必须卸载重装。
+日常构建仍出 debug 包，用仓库里固定的 `debug.keystore`（别名 `Sanker`，口令 `android`）。它被提交是**有意为之**——本机和 CI 共用一个签名，包才能互相覆盖安装；换签名会导致 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，必须卸载重装。
 
-要发正式包，需要一个**私有** keystore，且绝不能进仓库（`.gitignore` 已挡 `*.jks` / `release.keystore` / `keystore.properties`）：
+**打 `v*` tag 才走 release 签名**，密钥从 GitHub secret 注入，落到 runner 的临时目录，构建后无论成败都删（`if: always()`）。
+
+**没有回退路径，这是关键。** `signingConfigs.create("release")` 只从环境变量读，读不到就留空；`gradle.taskGraph.whenReady` 里再查一遍四个变量，缺任何一个直接 `GradleException`。实测无凭据时 **0.66 秒失败，编译都不开始**。
+
+> 检查必须挂在**任务图**上，不能写成 `assembleRelease` 的 `doFirst`——那是个生命周期任务，它自己的 `doFirst` 在打包**之后**才跑，APK 早就出来了。
+>
+> 为什么宁可炸也不回退：**悄悄用 debug 密钥签的正式包，看起来正常、装得上、跑得动**，只是它的私钥公开在这个仓库里。而密钥一旦丢失或换掉，已安装的用户就永远收不到更新了——签名对不上，只能卸载重装、存档全失。这个不对称性决定了这里只能大声失败。
+
+本机验证签名（需要自己的 keystore，口令走 `read -rs` 不落 shell 历史）：
+
+```bash
+export SIGNING_KEYSTORE_FILE=~/Documents/release.jks
+export SIGNING_KEY_ALIAS=Sanker
+read -rs SIGNING_STORE_PASSWORD && export SIGNING_STORE_PASSWORD
+export SIGNING_KEY_PASSWORD="$SIGNING_STORE_PASSWORD"
+./gradlew assembleRelease
+$ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs \
+    app/build/outputs/apk/release/app-release.apk
+```
+
+**R8 仍然关着**（`isMinifyEnabled = false`）。要开得先验证 JNI 入口（`Java_com_retroai_scaler_jni_NativeBridge_*`）和 ncnn 的反射路径不被裁掉——那是独立的一轮真机往返，不该和首次签名挤在一起。
+
+密钥怎么生成（**口令只有持有者知道，不进任何文档、任何日志**）：
 
 ```bash
 keytool -genkeypair -v -keystore release.jks -storetype PKCS12 \
@@ -296,13 +327,7 @@ base64 -i release.jks | pbcopy      # 存进 GitHub Secret
 
 需要的 Secrets：`SIGNING_KEYSTORE_BASE64`、`SIGNING_STORE_PASSWORD`、`SIGNING_KEY_ALIAS`、`SIGNING_KEY_PASSWORD`。
 
-改动点：
-
-- `app/build.gradle.kts` 加 `signingConfigs.create("release")`，从环境变量读取，**取不到时不要硬编码回退**——宁可让 release 构建失败，也不能悄悄用 debug 密钥签正式包；
-- workflow 里在构建前把 base64 解码成文件，构建后删除；
-- `assembleRelease` 目前 `isMinifyEnabled = false`，要开 R8 的话得先验证 JNI 入口（`Java_com_retroai_scaler_jni_NativeBridge_*`）和 ncnn 反射路径不被裁掉。
-
-**密钥丢失 = 永久无法给已安装用户推更新**（签名对不上，只能卸载重装、存档全失）。生成后立刻离线备份。
+**密钥丢失 = 永久无法给已安装用户推更新。** 生成后立刻离线备份，这一条没有补救办法。
 
 ### 9.2 更多遮罩类型
 

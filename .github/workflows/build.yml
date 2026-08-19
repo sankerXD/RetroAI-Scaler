@@ -67,10 +67,48 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build debug APK
+      # Only on a tag. Every other push builds and uploads a debug APK, which
+      # needs no secret at all - and a pull request from a fork could not read
+      # one anyway.
+      - name: Decode release keystore
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
         run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64}" ]; then
+            echo "::error::SIGNING_KEYSTORE_BASE64 is not set - a tag build cannot be signed."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          # Never echo the path's contents, only that it arrived intact.
+          echo "keystore decoded, $(wc -c < "$RUNNER_TEMP/release.jks") bytes"
+          echo "SIGNING_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      # One step for both, keyed off whether the keystore was decoded. Gradle
+      # refuses to assemble a release without all four variables (see
+      # app/build.gradle.kts), so a tag build cannot silently fall back to the
+      # committed debug key.
+      - name: Build APK
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          if [ -n "${SIGNING_KEYSTORE_FILE:-}" ]; then
+            ./gradlew assembleRelease --no-daemon --stacktrace
+            echo "APK_PATH=app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_ENV"
+          else
+            ./gradlew assembleDebug --no-daemon --stacktrace
+            echo "APK_PATH=app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_ENV"
+          fi
+
+      # always(), because a failed build must not leave the key on the runner.
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
 
       - name: Name the artifact
         id: name
@@ -80,14 +118,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.name.outputs.name }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 30
 
-      # Tagging v1.2.3 publishes a release with the APK attached.
+      # Tagging v1.2.3 publishes a release with the signed APK attached.
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/app-debug.apk
+          files: ${{ env.APK_PATH }}
           generate_release_notes: true
