@@ -79,6 +79,20 @@ float getLuma(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
 }
 
+/**
+ * Fraction of the window [x0, x0+w] that falls inside the band [lo, hi].
+ *
+ * The pattern repeats with period 1 and x0 is folded into [0,1), so the window
+ * can run off the end; the second term is the wrapped part. Only one wrap is
+ * possible because w never exceeds 1.
+ */
+float bandCover(float x0, float w, float lo, float hi) {
+    float x1 = x0 + w;
+    float c = max(0.0, min(x1, hi) - max(x0, lo));
+    c += max(0.0, min(x1, hi + 1.0) - max(x0, lo + 1.0));
+    return c / max(w, 1e-6);
+}
+
 // Pixel-art sampling: keeps each native pixel a crisp square but antialiases
 // its edge over exactly one output pixel. Plain bilinear turns sprite art into
 // mush at 4x; plain nearest gives ragged diagonals.
@@ -607,37 +621,73 @@ void main() {
             linear *= mix(1.0, weight / max(norm, 0.35), uScanlineIntensity);
         }
 
-        // The mask belongs to the DISPLAY: indexed by screen pixel, fixed pitch
-        // on the glass, independent of the console's resolution.
+        // The mask is one triad per GAME pixel, area weighted.
+        //
+        // It used to be a hard 3-screen-pixel triad, on the reasoning that a
+        // real shadow mask has a fixed pitch on the glass whatever is being
+        // displayed. That reasoning is right about a CRT and wrong here, and
+        // the reason is aliasing: the picture is drawn at an integer scale k,
+        // so a game pixel is k screen pixels wide, and unless k is a multiple
+        // of 3 each successive game pixel lands on a different phase of the
+        // triad. At k=4 that is [R,G,B,R], [G,B,R,G], [B,R,G,B] - every game
+        // pixel tinted towards one primary, cycling with a period of three.
+        // Measured as a 12 % channel imbalance at 25 % strength and 29 % at
+        // 50 %: not a subtle thing, a colour crawl across the whole picture.
+        //
+        // It went unseen for so long because the masks were tuned on GBA at
+        // 1080p, where k=6 - one of the two combinations in the whole matrix
+        // where 3 divides k and the artefact vanishes.
+        //
+        // Locking the triad to the game grid kills the beat by construction.
+        // The cost, accepted deliberately: the mask now gets coarser or finer
+        // with the platform and the scale, where a real mask would not. A
+        // static change in coarseness is easier to live with than a moving
+        // colour cycle.
         if (uMaskStrength > 0.001) {
             float dark = 1.0 - uMaskStrength;
             float light = 1.0 + uMaskStrength * 0.6;
-            vec3 mask = vec3(dark);
-            vec2 mp = floor(px);
 
-            if (uMaskType == 1) {
-                // Aperture grille: vertical RGB stripes, 3 screen px pitch.
-                float slot = fract(mp.x / 3.0);
-                if (slot < 0.333) mask.r = light;
-                else if (slot < 0.666) mask.g = light;
-                else mask.b = light;
-            } else if (uMaskType == 2) {
-                // TV shadow mask: staggered triads, every other column shifted.
-                float line = light;
-                float odd = fract(mp.x / 6.0) < 0.5 ? 1.0 : 0.0;
-                if (fract((mp.y + odd) / 2.0) < 0.5) line = dark;
-                float slot = fract(mp.x / 3.0);
-                if (slot < 0.333) mask.r = light;
-                else if (slot < 0.666) mask.g = light;
-                else mask.b = light;
-                mask *= line;
+            // Output pixels per game pixel. Integer by construction (section 3
+            // of AGENT.md), so a screen pixel never straddles two game pixels.
+            float k = max(uOutputRect.z / max(uNativeRes.x, 1.0), 1.0);
+            float w = min(1.0 / k, 1.0);
+
+            vec2 g = uv * uNativeRes;
+            float gx = fract(g.x);
+            float gy = fract(g.y);
+
+            // Horizontal offset of this triad row. Both shifts are half a
+            // triad, which is what makes the geometry staggered rather than
+            // striped.
+            float shift = 0.0;
+            if (uMaskType == 2) {
+                shift = fract(floor(g.y) * 0.5) < 0.5 ? 0.0 : 0.5;
             } else if (uMaskType == 3) {
-                // Slot mask (VGA style): triads sheared along Y.
-                vec2 sp = floor(mp * vec2(1.0, 0.5));
-                float slot = fract((sp.x + sp.y * 3.0) / 6.0);
-                if (slot < 0.333) mask.r = light;
-                else if (slot < 0.666) mask.g = light;
-                else mask.b = light;
+                // Slot: two game rows per triad row, sheared each row.
+                shift = fract(floor(g.y * 0.5) * 0.5) < 0.5 ? 0.0 : 0.5;
+            }
+
+            float x0 = fract(gx - 0.5 * w + shift);
+            vec3 cov = vec3(bandCover(x0, w, 0.0, 1.0 / 3.0),
+                            bandCover(x0, w, 1.0 / 3.0, 2.0 / 3.0),
+                            bandCover(x0, w, 2.0 / 3.0, 1.0));
+            // dark + (light - dark) * coverage, i.e. the coverage-weighted
+            // average of the hard mask. A screen pixel wholly inside one
+            // phosphor gets exactly the old light/dark pair; one that spans a
+            // whole triad (k < 3, where no triad can be resolved) gets a flat
+            // dim with no colour, which is the honest answer rather than an
+            // aliased guess. Summed over a game pixel every channel receives
+            // k/3 lit samples, so the triad is energy neutral for any k.
+            vec3 mask = mix(vec3(dark), vec3(light), cov);
+
+            if (uMaskType == 2) {
+                // Half of each game row lit, half dark - the vertical half of
+                // a shadow mask, area weighted for the same reason as above.
+                // A fixed screen-row period would beat against odd k exactly
+                // like the triad did, as a brightness banding instead of a
+                // colour one.
+                float lit = bandCover(fract(gy - 0.5 * w), w, 0.0, 0.5);
+                mask *= mix(dark, light, lit);
             }
             linear *= mask;
         }

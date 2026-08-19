@@ -61,6 +61,17 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         /** How often the foreground app is polled. */
         private const val FOREGROUND_POLL_MS = 400L
 
+        /**
+         * Auto-detect retries. Five attempts 4 s apart covers ~20 s, which is
+         * well past a GBA BIOS boot; the gap clears detectSourceWindow's own
+         * 3 s poll so two runs cannot be in flight at once. Each attempt hides
+         * the floating ball for the measurement, so the ball blinking is the
+         * visible cost - and it only happens while detection is failing, which
+         * is when the picture is in the wrong place anyway.
+         */
+        private const val AUTO_DETECT_ATTEMPTS = 5
+        private const val AUTO_DETECT_RETRY_MS = 4000L
+
         /** Capture that never produced a single frame is a broken pipeline. */
         private const val FIRST_FRAME_TIMEOUT_MS = 4000L
 
@@ -342,14 +353,43 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         val manager = floatingBallManager ?: return
         if (manager.profile.detectedSourceRect != null) return
         mainHandler.removeCallbacks(autoDetectRunnable)
+        autoDetectAttempts = 0
         mainHandler.postDelayed(autoDetectRunnable, 1500L)
     }
 
-    private val autoDetectRunnable = Runnable {
-        val manager = floatingBallManager ?: return@Runnable
-        if (!isRenderingActive || manager.profile.detectedSourceRect != null) return@Runnable
-        Log.i(TAG, "auto-detecting capture window")
-        manager.detectSourceWindow(silent = true)
+    /**
+     * Retried rather than fired once, because 1.5 s is not long enough for
+     * every console and the single shot failed silently.
+     *
+     * A GBA is still playing the BIOS boot logo at 1.5 s: a black field with a
+     * small sliding wordmark. Thresholded, the largest non-black region IS that
+     * wordmark, which the aspect gate correctly refuses (10.2) - and with no
+     * retry the capture window was then never measured for the rest of the
+     * session, so the enhanced picture sat wherever the PREDICTED source rect
+     * put it. Every other console loads straight into a full-frame picture and
+     * hit on the first try, which is why this only ever showed up on GBA.
+     *
+     * Refusing is right; giving up after one refusal is not.
+     */
+    private var autoDetectAttempts = 0
+
+    // An object rather than a lambda: the body reposts itself, and a lambda
+    // assigned to a val cannot refer to that val while initialising it.
+    private val autoDetectRunnable = object : Runnable {
+        override fun run() {
+            val manager = floatingBallManager ?: return
+            if (!isRenderingActive || manager.profile.detectedSourceRect != null) return
+            autoDetectAttempts++
+            Log.i(TAG, "auto-detecting capture window (attempt $autoDetectAttempts)")
+            manager.detectSourceWindow(silent = true)
+            // Spaced past detectSourceWindow's own 3 s poll so attempts cannot
+            // overlap - two detections in flight would blank each other's frames.
+            if (autoDetectAttempts < AUTO_DETECT_ATTEMPTS) {
+                mainHandler.postDelayed(this, AUTO_DETECT_RETRY_MS)
+            } else {
+                Log.w(TAG, "auto-detect gave up after $autoDetectAttempts attempts")
+            }
+        }
     }
 
     /**

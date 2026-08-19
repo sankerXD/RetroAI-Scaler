@@ -397,12 +397,16 @@
             android:textSize="10sp" />
 
         <!--
-            Diagnostic, not a player-facing control. The cost it reports is the
-            one the HUD cannot measure on its own: a normal frame's inference is
-            a burst that never keeps the GPU busy long enough for the governor
-            to raise its clock, so the idle-clock and boosted-clock costs differ
-            by a factor of 2.1 and which one you see is luck. This runs the
-            network back to back until the clock has to come up.
+            HIDDEN. Developer diagnostic, not a player-facing control: it
+            reports the inference cost with contention removed, which nobody
+            outside this repository has a use for, and it freezes the enhanced
+            picture for three seconds to do it.
+
+            Kept in the tree rather than deleted because the numbers behind it
+            are the only ones comparable across consoles, and the next time
+            that question comes up the answer should be a visibility flip
+            rather than a rewrite. Set visibility="visible" to bring it back;
+            everything behind it is still wired and still updating.
         -->
         <Button
             android:id="@+id/btnCalibrateAi"
@@ -413,6 +417,7 @@
             android:text="校准 AI 耗时"
             android:textColor="@color/primary"
             android:textSize="12sp"
+            android:visibility="gone"
             app:strokeColor="@color/primary" />
 
         <Button
