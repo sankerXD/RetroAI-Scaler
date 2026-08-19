@@ -42,6 +42,16 @@ static std::atomic<bool> gPipelineActive{false};
 static std::atomic<float> gStatFps{0.0f};
 static std::atomic<float> gStatCaptureMs{0.0f};
 static std::atomic<float> gStatAiMs{0.0f};
+static std::atomic<float> gStatAiP95Ms{0.0f};
+static std::atomic<float> gStatAiFloorMs{0.0f};
+static std::atomic<int> gStatAiCalState{0};
+static std::atomic<float> gStatAiCalMinMs{0.0f};
+static std::atomic<float> gStatAiCalRunMinMs{0.0f};
+static std::atomic<float> gStatAiCalMedMs{0.0f};
+static std::atomic<float> gStatAiCalMaxMs{0.0f};
+static std::atomic<int> gStatAiCalRuns{0};
+static std::atomic<float> gStatAiGpuMs{0.0f};
+static std::atomic<float> gStatAiCpuMs{0.0f};
 static std::atomic<float> gStatRenderMs{0.0f};
 static std::atomic<float> gStatSwapMs{0.0f};
 /** -1 no network, 0 ncnn on CPU, 1 ncnn on Vulkan. */
@@ -52,9 +62,19 @@ static void publishStats(const PerformanceStats& s, int aiBackend) {
     gStatFps.store(s.fps, std::memory_order_relaxed);
     gStatCaptureMs.store(s.captureMs, std::memory_order_relaxed);
     gStatAiMs.store(s.aiMs, std::memory_order_relaxed);
+    gStatAiP95Ms.store(s.aiP95Ms, std::memory_order_relaxed);
+    gStatAiFloorMs.store(s.aiFloorMs, std::memory_order_relaxed);
+    gStatAiGpuMs.store(s.aiGpuMs, std::memory_order_relaxed);
+    gStatAiCpuMs.store(s.aiCpuMs, std::memory_order_relaxed);
     gStatRenderMs.store(s.renderMs, std::memory_order_relaxed);
     gStatSwapMs.store(s.swapMs, std::memory_order_relaxed);
     gStatAiBackend.store(aiBackend, std::memory_order_relaxed);
+    gStatAiCalState.store(s.aiCalState, std::memory_order_relaxed);
+    gStatAiCalMinMs.store(s.aiCalMinMs, std::memory_order_relaxed);
+    gStatAiCalRunMinMs.store(s.aiCalRunMinMs, std::memory_order_relaxed);
+    gStatAiCalMedMs.store(s.aiCalMedMs, std::memory_order_relaxed);
+    gStatAiCalMaxMs.store(s.aiCalMaxMs, std::memory_order_relaxed);
+    gStatAiCalRuns.store(s.aiCalRuns, std::memory_order_relaxed);
 }
 
 extern "C" {
@@ -507,6 +527,18 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeFetchCapturedFrame(
     return out;
 }
 
+JNIEXPORT void JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeCalibrateAi(
+    JNIEnv* /* env */,
+    jobject /* this */
+) {
+    // Takes the pipeline lock, which is fine here and NOT a violation of 10.3a:
+    // that rule is about the 500 ms stats poll, which runs unconditionally
+    // while the menu is open. This is one user tap, and it only raises a flag.
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    if (gRenderer) gRenderer->requestAiCalibration();
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_retroai_scaler_jni_NativeBridge_nativeGetPerformanceStats(
     JNIEnv* env,
@@ -518,17 +550,29 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeGetPerformanceStats(
     // floating menu is open; taking the pipeline lock here is what ANR'd.
     if (!gPipelineActive.load(std::memory_order_relaxed) || !statsOut) return JNI_FALSE;
 
-    if (env->GetArrayLength(statsOut) < 6) return JNI_FALSE;
+    // Kept append-only: the first six slots keep the meaning they always had, so
+    // a Kotlin side that has not been rebuilt still reads the right numbers.
+    if (env->GetArrayLength(statsOut) < 16) return JNI_FALSE;
 
-    jfloat buffer[6] = {
+    jfloat buffer[16] = {
         gStatFps.load(std::memory_order_relaxed),
         gStatCaptureMs.load(std::memory_order_relaxed),
         gStatAiMs.load(std::memory_order_relaxed),
         gStatRenderMs.load(std::memory_order_relaxed),
         gStatSwapMs.load(std::memory_order_relaxed),
-        (jfloat)gStatAiBackend.load(std::memory_order_relaxed)
+        (jfloat)gStatAiBackend.load(std::memory_order_relaxed),
+        gStatAiP95Ms.load(std::memory_order_relaxed),
+        gStatAiGpuMs.load(std::memory_order_relaxed),
+        gStatAiCpuMs.load(std::memory_order_relaxed),
+        gStatAiFloorMs.load(std::memory_order_relaxed),
+        (jfloat)gStatAiCalState.load(std::memory_order_relaxed),
+        gStatAiCalMinMs.load(std::memory_order_relaxed),
+        gStatAiCalRunMinMs.load(std::memory_order_relaxed),
+        gStatAiCalMedMs.load(std::memory_order_relaxed),
+        gStatAiCalMaxMs.load(std::memory_order_relaxed),
+        (jfloat)gStatAiCalRuns.load(std::memory_order_relaxed)
     };
-    env->SetFloatArrayRegion(statsOut, 0, 6, buffer);
+    env->SetFloatArrayRegion(statsOut, 0, 16, buffer);
     return JNI_TRUE;
 }
 

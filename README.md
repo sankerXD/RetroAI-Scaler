@@ -25,19 +25,20 @@ luminance at exactly the factor the screen draws.
 
 ## Features
 
-### Four upscalers
+### Five upscalers
 
 | Engine | Best for | Latency |
 | --- | --- | --- |
 | **Pixel Edge Reconstruction** | 2D sprite art — GBA, GBC, FC, SFC, MD | none |
-| **GPU Sharpen** | a harder, more raw look | none |
+| **HD-2D Lighting** | 2D sprite art you want to look modernised | +1 frame (depth) |
 | **ESPCN Fast / HQ** | PS1, 3D, gradients and dithering | +1 frame |
 | **ESPCN Ultra** | flagship SoCs with GPU inference | +1 frame |
+| **GPU Sharpen** | a harder, more raw look | none |
 
 Pixel Edge Reconstruction detects where a staircase of pixels was meant to be a
 diagonal and rebuilds it as one, leaving flat areas and single-pixel details
 untouched. The ESPCN engines run a neural network on the luminance channel,
-selectable at 1× / 2× / 3× / 4× reconstruction.
+selectable at 1× / 2× / 3× / 4× / 6× reconstruction.
 
 ### Exact integer scaling
 

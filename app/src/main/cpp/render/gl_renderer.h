@@ -18,9 +18,72 @@ namespace retroai {
 struct PerformanceStats {
     float fps{0.0f};
     float captureMs{0.0f};
+    /**
+     * MEDIAN inference cost over the last kAiWindow results, not the last one.
+     *
+     * The instantaneous value is unusable as a number to look at or to quote:
+     * one unchanged configuration was measured alternating between two states a
+     * factor of two apart (17/33 ms at one factor, 18/40 at another), which is
+     * the GPU's clock state rather than anything the pipeline did. A spot
+     * reading on a quantity like that is a coin flip, and several rounds of
+     * cross-machine comparison were wasted before that was noticed.
+     *
+     * p95 sits beside it because the median alone hides the bad state entirely,
+     * and the bad state is what the frame budget has to survive.
+     */
     float aiMs{0.0f};
+    float aiP95Ms{0.0f};
+    /**
+     * Lowest window median seen since the model was loaded - the clock-free
+     * floor, and the ONLY number that may be compared across consoles.
+     *
+     * The median and p95 both describe whatever clock state the GPU happened
+     * to be in. A console whose load never crosses the governor's up-threshold
+     * sits in the low state for a whole session and reports a tight, confident,
+     * wrong number: GBC measured 12.1 median / 12.3 p95 in one session and 5.8
+     * in another, with nothing changed. A tight p95 means "one state was
+     * sampled", not "this is the cost".
+     *
+     * The floor converges the moment the device visits its top clock once, and
+     * being a window median rather than a single sample it cannot be set by one
+     * lucky result.
+     */
+    float aiFloorMs{0.0f};
+    /** Medians of the two halves - see InferenceTimings for what they separate. */
+    float aiGpuMs{0.0f};
+    float aiCpuMs{0.0f};
     float renderMs{0.0f};   // GPU pass submission, excludes the vsync wait
     float swapMs{0.0f};     // eglSwapBuffers, i.e. how long we waited on vsync
+
+    /**
+     * Result of the last explicit calibration run. 0 idle, 1 running, 2 done.
+     *
+     * What it buys is a reading with NO contention: the network runs back to
+     * back with neither RetroArch nor the compositor interleaved, so the spread
+     * within one run is 1.23~1.40 rather than the 2x the live pipeline shows.
+     *
+     * What it does NOT buy is control of the GPU clock. That was the reason it
+     * was built and it did not work - see kCalibrateMs. Read it together with
+     * aiFloorMs, which is the number that does catch the fast clock.
+     */
+    int aiCalState{0};
+    /**
+     * Best over ALL calibration runs since the model loaded, not just the last.
+     *
+     * A 3 s burst turned out to remove contention but NOT to control the clock:
+     * within one burst the rate is steady (max/min 1.23~1.40 with nothing else
+     * on the GPU), but which of the two clock states it settles in is luck -
+     * measured four of eight configurations landing in the slow one, each
+     * exactly ~2x its own known best. Accumulating across presses is what makes
+     * the answer converge, so pressing three times and reading this is the
+     * procedure rather than a workaround.
+     */
+    float aiCalMinMs{0.0f};
+    /** Fastest run of the LAST burst, so a fresh press can be seen to help. */
+    float aiCalRunMinMs{0.0f};
+    float aiCalMedMs{0.0f};
+    float aiCalMaxMs{0.0f};
+    int aiCalRuns{0};
 };
 
 /**
@@ -137,7 +200,21 @@ public:
         espcnEngine_.release();
         espcnFailureStreak_ = 0;
         hasAiPair_ = false;
+        resetAiTimings();
     }
+
+    /** Length of the rolling inference window behind the AI percentiles. */
+    static constexpr int kAiWindow = 32;
+
+    /**
+     * Asks the worker to time the loaded network back to back for ~3 s.
+     *
+     * Cheap and non-blocking: it only raises a flag. Nothing happens if no
+     * network is loaded or one is already running, so the button cannot queue
+     * up work by being tapped repeatedly. Progress and result arrive through
+     * PerformanceStats.
+     */
+    void requestAiCalibration();
 
     PerformanceStats getStats() const { return stats_; }
 
@@ -153,7 +230,6 @@ public:
         if (!espcnEngine_.isReady()) return -1;
         return espcnEngine_.isUsingGpu() ? 1 : 0;
     }
-    void updateAiTime(float timeMs) { stats_.aiMs = timeMs; }
 
     EGLDisplay getEglDisplay() const { return eglDisplay_; }
     EGLContext getEglContext() const { return eglContext_; }
@@ -300,6 +376,25 @@ private:
      * stop does not wait for it - two confident zeroes clear the window.
      */
     static constexpr int kScrollWindow = 8;
+
+    /**
+     * How long a calibration burst runs, back to back with no idle in it.
+     *
+     * Both shapes have now been measured and NEITHER controls the GPU clock.
+     * A continuous 3 s burst landed in the slow state in four of eight
+     * configurations, and again in three of four controls. Rebuilding it as
+     * short bursts after idle - on the theory that a mobile GPU grants its
+     * boost clock to exactly that shape - was worse: all eight came back slow.
+     * The continuous form is kept only because its within-run spread is tighter
+     * (max/min 1.23~1.40 against 2.0+ for the idle form), which makes a single
+     * reading cleaner even though which clock it reads is still luck.
+     *
+     * So the button removes CONTENTION, not clock variance. The number that
+     * actually catches the fast clock is the runtime floor beside it, which
+     * accumulates while the game is being played rather than while the pipeline
+     * is stalled for a benchmark.
+     */
+    static constexpr float kCalibrateMs = 3000.0f;
     /** Unreadable for this long and the velocity starts decaying toward zero. */
     static constexpr float kScrollHoldMs = 120.0f;
     bool hasGeometry_{false};
@@ -403,6 +498,34 @@ private:
     std::vector<uint8_t> readbackBuffer_{};
     int espcnFailureStreak_{0};
 
+    /**
+     * Rolling window of finished inferences, for the percentiles in
+     * PerformanceStats. 32 results is 0.6~1.5 s of wall clock at the rates
+     * these networks run at - long enough to contain both clock states, short
+     * enough that switching engine is reflected within a second.
+     *
+     * Render thread only: samples are pushed where results are collected, and
+     * the percentiles are recomputed there rather than per frame, because a
+     * result lands tens of times a second and a frame happens 144.
+     */
+    float aiWinTotal_[kAiWindow]{};
+    float aiWinGpu_[kAiWindow]{};
+    float aiWinCpu_[kAiWindow]{};
+    unsigned aiWinCount_{0};
+
+    /** Feeds one result into the window and refreshes the published stats. */
+    void pushAiTimings(const InferenceTimings& t);
+    /**
+     * Drops every sample and zeroes the published AI numbers.
+     *
+     * Called whenever the thing being measured changes or stops producing.
+     * A stale cost that keeps being displayed after the model changed, or
+     * after the pipeline gave up, is the same fault as AGENT.md 10.7's
+     * `success=1` on the paused path: an indicator that keeps reporting on
+     * something that is no longer happening is worse than no indicator.
+     */
+    void resetAiTimings();
+
     // Worker thread state (guarded by aiMutex_)
     std::thread aiThread_;
     std::mutex aiMutex_;
@@ -414,7 +537,24 @@ private:
     bool aiFailed_{false};
     int aiJobWidth_{0};
     int aiJobHeight_{0};
-    float aiLastMs_{0.0f};
+    InferenceTimings aiLastTimings_{};
+
+    /**
+     * Calibration handshake, all under aiMutex_.
+     *
+     * The request is picked up by the worker AFTER it has published a normal
+     * result, so it always has a real captured frame in hand to run on - a
+     * synthetic input would be measuring the wrong data layout and, on a
+     * network this shallow, possibly a different memory access pattern.
+     */
+    bool aiCalRequested_{false};
+    bool aiCalRunning_{false};
+    bool aiCalHasResult_{false};
+    float aiCalMin_{0.0f};
+    float aiCalRunMin_{0.0f};
+    float aiCalMed_{0.0f};
+    float aiCalMax_{0.0f};
+    int aiCalRuns_{0};
     std::vector<uint8_t> aiInput_{};
     std::vector<uint8_t> aiOutput_{};
     /**

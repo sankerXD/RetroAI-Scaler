@@ -7,6 +7,29 @@
 namespace retroai {
 
 /**
+ * One inference, split at the boundary that matters.
+ *
+ * The two halves answer different questions and they were being added together
+ * into a single number that could not distinguish them. `gpuMs` is ncnn's
+ * extract - upload, dispatch, fence wait, download - and it moves with the GPU
+ * clock and with whatever else is on the queue. `cpuMs` is the pixel format
+ * work either side of it, which runs on this thread and moves with which core
+ * the scheduler put it on.
+ *
+ * The reason for the split: the measured cost of one configuration was
+ * observed jumping between two states a factor of two apart. A global factor
+ * that shows up in BOTH halves is a clock; one that shows up only in `cpuMs`
+ * is the worker being demoted off the big cores. A single total cannot tell
+ * those apart, and every cross-machine comparison made before this split was
+ * unknowingly averaging over them.
+ */
+struct InferenceTimings {
+    float totalMs{0.0f};
+    float gpuMs{0.0f};
+    float cpuMs{0.0f};
+};
+
+/**
  * NCNN ESPCN sub-pixel super-resolution on the Y (luminance) channel.
  *
  * The model is handed in as raw bytes (read from assets on the Java side), so
@@ -56,11 +79,12 @@ public:
         uint8_t* outY,
         int outWidth,
         int outHeight,
-        float& outInferenceTimeMs
+        InferenceTimings& outTimings
     );
 
     bool isReady() const { return isReady_; }
     int getScaleFactor() const { return scaleFactor_; }
+
     /**
      * In and out are separate because they stopped agreeing: ESPCN is 1 -> 1,
      * RetroAI 3 -> 3, and the depth model 3 -> 1 at scale 1. Assuming one

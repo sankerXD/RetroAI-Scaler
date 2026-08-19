@@ -540,10 +540,24 @@ object ProfilePreference {
         )
     }
 
+    /**
+     * Writes only the settings of the console this profile belongs to.
+     *
+     * It deliberately does NOT touch KEY_CONSOLE. It used to, and that single
+     * line silently undid platform switches: the floating menu holds a profile
+     * snapshot taken when the service started, so after the user picked a new
+     * console in the main activity, the first control they touched in the menu
+     * wrote the OLD console back as the current one - and re-stamped that
+     * console's engine and factor on top. The visible symptom was "every
+     * platform switch lands back on HD-2D", which was not a default at all
+     * (the default is PIXEL_EDGE) but the previous session being restored.
+     *
+     * Whoever owns a key has to be the only writer of it. KEY_CONSOLE belongs
+     * to [setConsole] and to the picker that calls it.
+     */
     fun save(context: Context, profile: RenderProfile) {
         val c = profile.console
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_CONSOLE, c.name)
             .putBoolean(key(c, "aiEnabled"), profile.isAiEnabled)
             .putString(key(c, "engine"), profile.engine.name)
             .putString(key(c, "aiScale"), profile.aiScale.name)

@@ -91,6 +91,7 @@ class FloatingBallManager(
      */
     private var captureButton: Button? = null
     private var autoCaptureButton: Button? = null
+    private var calibrateButton: Button? = null
     private var lastCaptureMessage: String? = null
 
     var profile: RenderProfile = ProfilePreference.load(context)
@@ -388,22 +389,6 @@ class FloatingBallManager(
 
         root.findViewById<ImageView>(R.id.btnCloseMenu).setOnClickListener { hideMenu() }
 
-        // 2. AI reconstruction factor
-        root.findViewById<ChipGroup>(R.id.chipGroupScale)
-            .setOnCheckedStateChangeListener { _, checkedIds ->
-                if (checkedIds.isEmpty()) return@setOnCheckedStateChangeListener
-                profile.aiScale = when (checkedIds.first()) {
-                    R.id.chipScale1x -> AiScale.X1
-                    R.id.chipScale2x -> AiScale.X2
-                    R.id.chipScale3x -> AiScale.X3
-                    R.id.chipScale4x -> AiScale.X4
-                    R.id.chipScale6x -> AiScale.X6
-                    else -> profile.aiScale
-                }
-                applyEngine()
-                applyRenderProfile()
-            }
-
         // 3. AI Switch
         root.findViewById<SwitchMaterial>(R.id.switchAiEnable)
             .setOnCheckedChangeListener { _, isChecked ->
@@ -467,7 +452,17 @@ class FloatingBallManager(
             clearDetectedWindow(); true
         }
         root.findViewById<Button>(R.id.btnRestoreRaConfig).setOnClickListener { restoreRetroArchConfig() }
-        root.findViewById<Button>(R.id.btnRestoreRaConfig).setOnClickListener { restoreRetroArchConfig() }
+
+        calibrateButton = root.findViewById<Button>(R.id.btnCalibrateAi).apply {
+            setOnClickListener {
+                // The label carries the whole interaction, including the result.
+                // A Toast is invisible from here - TYPE_TOAST sits at window
+                // layer 2005 and this overlay at 2038, so the enhanced picture
+                // is painted straight over it.
+                text = "校准中…画面会静止约 3 秒"
+                nativeBridge.nativeCalibrateAi()
+            }
+        }
 
         // 5. Retro Shaders
         val tvScanline = root.findViewById<TextView>(R.id.tvScanlineLabel)
@@ -1026,12 +1021,43 @@ class FloatingBallManager(
         resetAutoHideTimer()
     }
 
+    /**
+     * The calibration button's label IS its output.
+     *
+     * Reports min / median / max, in that order of importance. The minimum is
+     * the answer - by the end of a 3 s back-to-back burst the GPU is at its top
+     * clock and nothing else is interleaved, so the fastest run is the network's
+     * real cost on this frame size. The spread to the maximum says how much of
+     * the burst was spent still climbing.
+     *
+     * Driven off the same 500 ms stats poll as the HUD, so a run that finishes
+     * while the menu is closed still shows its result when it is reopened.
+     */
+    private fun updateCalibrateButtonText(stats: FloatArray) {
+        val button = calibrateButton ?: return
+        val floorMs = stats[9]
+        val state = stats[10].toInt()
+        val bestMs = stats[11]
+        val runMinMs = stats[12]
+        val medMs = stats[13]
+        val runs = stats[15].toInt()
+        val floor = if (floorMs > 0.01f) "运行中 %.1f".format(floorMs) else "运行中 --"
+        button.text = when {
+            state == 1 -> "校准中…画面会静止约 3 秒"
+            state == 2 && runs > 0 ->
+                "校准 %.1f / %s ms（本次 %.1f 中位 %.1f · %d 次）"
+                    .format(bestMs, floor, runMinMs, medMs, runs)
+            else -> "校准 AI 耗时　（%s ms）".format(floor)
+        }
+    }
+
     private fun updateHudStats() {
-        val stats = FloatArray(6)
+        val stats = FloatArray(16)
         if (!nativeBridge.nativeGetPerformanceStats(stats)) return
 
         val (fps, captureMs, aiMs, renderMs) = stats.toList()
         val swapMs = stats[4]
+        updateCalibrateButtonText(stats)
         floatingBallView?.findViewById<TextView>(R.id.tvBallFps)?.text = "%.0f".format(fps)
         // Which backend ncnn actually landed on. Asking for the GPU does not
         // guarantee getting it - with no Vulkan device it silently falls back
@@ -1045,10 +1071,19 @@ class FloatingBallManager(
         // AI runs on its own thread and the swap blocks on vsync, so neither
         // belongs in the frame's work cost - reporting them together would
         // make a vsync-limited pipeline look compute-bound.
-        val aiText = if (aiMs > 0.01f && backend != null) {
-            "AI 推理 %.1f ms（异步 · %s）".format(aiMs, backend)
-        } else if (aiMs > 0.01f) {
-            "AI 推理 %.1f ms（异步）".format(aiMs)
+        //
+        // ONE number, and it is the rolling median rather than the last result.
+        //
+        // The floor, p95 and the GPU/CPU split are all still computed - they
+        // are what the calibration button reports and what any future
+        // investigation needs - but they do not belong here. A player reading
+        // this line wants to know roughly what the enhancement costs; five
+        // figures with three different statistical meanings is a debugging
+        // surface, and putting a debugging surface in the player's menu makes
+        // it worse for both audiences.
+        val aiText = if (aiMs > 0.01f) {
+            val suffix = if (backend != null) "异步 · $backend" else "异步"
+            "AI 推理 %.1f ms（%s）".format(aiMs, suffix)
         } else {
             "AI 推理 未启用"
         }
@@ -1073,5 +1108,10 @@ class FloatingBallManager(
         floatingBallView = null
         edgeTabView = null
         menuView = null
+        // Held children go with the menu they belong to; keeping them would be
+        // a reference into a removed view hierarchy for the rest of the process.
+        captureButton = null
+        autoCaptureButton = null
+        calibrateButton = null
     }
 }

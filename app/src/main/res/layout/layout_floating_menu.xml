@@ -396,6 +396,25 @@
             android:textColor="@color/text_secondary"
             android:textSize="10sp" />
 
+        <!--
+            Diagnostic, not a player-facing control. The cost it reports is the
+            one the HUD cannot measure on its own: a normal frame's inference is
+            a burst that never keeps the GPU busy long enough for the governor
+            to raise its clock, so the idle-clock and boosted-clock costs differ
+            by a factor of 2.1 and which one you see is luck. This runs the
+            network back to back until the clock has to come up.
+        -->
+        <Button
+            android:id="@+id/btnCalibrateAi"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="38dp"
+            android:layout_marginTop="6dp"
+            android:text="校准 AI 耗时"
+            android:textColor="@color/primary"
+            android:textSize="12sp"
+            app:strokeColor="@color/primary" />
+
         <Button
             android:id="@+id/btnStopService"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"

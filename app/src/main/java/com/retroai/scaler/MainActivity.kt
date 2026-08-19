@@ -200,6 +200,44 @@ class MainActivity : AppCompatActivity() {
      * needs to know which core to configure before any menu has been opened.
      */
     private fun showConsolePicker() {
+        // Switching while enhancement runs does not work and never did, which
+        // was not visible from here.
+        //
+        // The console is read once when the service starts: OverlayService
+        // loads the profile in applyConfigOnStart, and FloatingBallManager
+        // snapshots it in its constructor. Nothing notifies a running service
+        // that this key changed. So the renderer keeps inferring at the old
+        // console's native resolution, RetroArch keeps the viewport written for
+        // the old console - which is what showed up as "RA comes up black
+        // after switching" - and the floating menu keeps offering the old
+        // console's settings.
+        //
+        // Rather than build half a hot-switch, refuse: enhancement has to stop,
+        // and stopping it is also what restores RetroArch's config. Note that
+        // force-stopping the app instead KILLS that restore mid-way (it runs on
+        // a non-daemon thread at service stop, AGENT.md 2), which leaves the
+        // previous console's viewport in place and is the other half of the
+        // same black screen.
+        if (isServiceRunning) {
+            AlertDialog.Builder(this)
+                .setTitle("需要先停止 AI 增强")
+                .setMessage(
+                    "机种是在增强启动时读取的，运行中切换不会生效，还会让 RetroArch 停在上一个机种的取景窗上。\n\n" +
+                            "停止增强会同时还原 RetroArch 配置，请等通知栏的常驻项消失后再启动。"
+                )
+                .setPositiveButton("停止并选择") { _, _ ->
+                    stopOverlayService()
+                    updateServiceStateUi()
+                    showConsoleList()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
+        showConsoleList()
+    }
+
+    private fun showConsoleList() {
         val consoles = ConsoleType.values()
         val labels = consoles
             .map { "${it.displayName}  ${it.nativeWidth}×${it.nativeHeight}" }

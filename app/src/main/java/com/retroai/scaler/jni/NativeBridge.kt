@@ -83,7 +83,34 @@ class NativeBridge {
     external fun nativeSetAutoCrop(enabled: Boolean)
     external fun nativeRecalibrateCrop()
 
-    /** statsOut must hold 5 floats: [fps, captureMs, aiMs, renderMs, swapMs] */
+    /**
+     * Asks the renderer to time the loaded network back to back for ~3 s.
+     *
+     * Non-blocking - it raises a flag and returns. Watch `aiCalState` in
+     * [nativeGetPerformanceStats] for progress (0 idle, 1 running, 2 done).
+     * A no-op when no network is loaded or a run is already in flight.
+     */
+    external fun nativeCalibrateAi()
+
+    /**
+     * statsOut must hold 16 floats:
+     * `[fps, captureMs, aiMs, renderMs, swapMs, aiBackend, aiP95Ms, aiGpuMs,
+     *   aiCpuMs, aiFloorMs, aiCalState, aiCalMinMs, aiCalRunMinMs, aiCalMedMs,
+     *   aiCalMaxMs, aiCalRuns]`
+     *
+     * `aiCalMinMs` accumulates across presses; `aiCalRunMinMs` is the last
+     * burst alone.
+     *
+     * The AI costs are MEDIANS over a rolling window of finished inferences,
+     * not the last result - see PerformanceStats in gl_renderer.h for why a
+     * spot reading of that quantity is meaningless. `aiGpuMs` is ncnn's
+     * extract, `aiCpuMs` the pixel-format work either side of it.
+     *
+     * Only the `aiCal*` numbers may be compared across consoles - everything
+     * else is at the mercy of whichever clock state the GPU happened to be in.
+     *
+     * Returns false if the array is shorter than 16.
+     */
     external fun nativeGetPerformanceStats(statsOut: FloatArray): Boolean
 
     /**

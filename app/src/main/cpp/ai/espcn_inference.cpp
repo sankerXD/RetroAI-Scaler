@@ -95,9 +95,9 @@ bool EspcnInference::process(
     uint8_t* out,
     int outWidth,
     int outHeight,
-    float& outInferenceTimeMs
+    InferenceTimings& outTimings
 ) {
-    outInferenceTimeMs = 0.0f;
+    outTimings = InferenceTimings{};
     if (!isReady_ || !in || !out || inWidth <= 0 || inHeight <= 0) {
         return false;
     }
@@ -130,8 +130,16 @@ bool EspcnInference::process(
     ex.set_num_threads(2);
     ex.input(inputBlob, inMat);
 
+    // Everything above is host-side pixel work; the network itself starts here.
+    // On Vulkan this call is where the upload, the dispatches and the fence
+    // wait live, so it is the half that tracks the GPU clock.
+    auto gpuStart = std::chrono::high_resolution_clock::now();
+
     ncnn::Mat outMat;
     int ret = ex.extract(outputBlob, outMat);
+
+    auto gpuEnd = std::chrono::high_resolution_clock::now();
+
     if (ret != 0 || outMat.w != outWidth || outMat.h != outHeight ||
         outMat.c != outChannels_) {
         ALOGE("inference extract failed: ret=%d out=%dx%dx%d (want %dx%dx%d)",
@@ -144,7 +152,12 @@ bool EspcnInference::process(
     outMat.to_pixels(out, rgbOut ? ncnn::Mat::PIXEL_RGB : ncnn::Mat::PIXEL_GRAY);
 
     auto endTime = std::chrono::high_resolution_clock::now();
-    outInferenceTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+    outTimings.totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+    outTimings.gpuMs = std::chrono::duration<float, std::milli>(gpuEnd - gpuStart).count();
+    // The remainder rather than a third clock: from_pixels/normalize before and
+    // denormalize/to_pixels after are the same kind of work on the same thread,
+    // and splitting them further would only add a number nobody reads.
+    outTimings.cpuMs = outTimings.totalMs - outTimings.gpuMs;
     return true;
 #else
     return false;

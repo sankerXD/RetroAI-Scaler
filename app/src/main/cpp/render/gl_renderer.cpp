@@ -939,6 +939,11 @@ bool GlRenderer::loadEspcnModel(const char* paramText,
     aiTexHeight_ = 0;
     espcnFailureStreak_ = 0;
     hasAiPair_ = false;
+    // The window describes the PREVIOUS network. Keeping it would show the old
+    // engine's cost under the new engine's name until enough new samples pushed
+    // it out - which is exactly how a whole round of measurements came to
+    // compare two different models believing they were one.
+    resetAiTimings();
     return ok;
 }
 
@@ -1009,9 +1014,9 @@ void GlRenderer::aiWorkerLoop() {
         lock.unlock();
 
         localOut.resize((size_t)w * scale * h * scale * espcnEngine_.outChannels());
-        float ms = 0.0f;
+        InferenceTimings timings{};
         bool ok = espcnEngine_.process(
-            localIn.data(), w, h, localOut.data(), w * scale, h * scale, ms);
+            localIn.data(), w, h, localOut.data(), w * scale, h * scale, timings);
 
         // Same input frame, same thread, delivered as one pair with the depth,
         // so the light and the panels it must skip always describe one frame.
@@ -1121,13 +1126,74 @@ void GlRenderer::aiWorkerLoop() {
         }
 
 
+        // Calibration, if one was asked for and this job produced something to
+        // run it on. Deliberately AFTER the normal result is in hand and BEFORE
+        // it is published: the burst is about to hold this thread for three
+        // seconds, and publishing first would let the render thread submit a
+        // new job that then sits unserved for the whole run.
+        //
+        // Three seconds because that is what it takes for the GPU governor to
+        // notice. A frame's inference is 5~50 ms followed by a wait, and that
+        // duty cycle is exactly what stops the clock from coming up; running
+        // back to back is the whole point of this, not an approximation of it.
+        bool doCalibration = false;
+        {
+            std::lock_guard<std::mutex> calLock(aiMutex_);
+            if (ok && aiCalRequested_) {
+                aiCalRequested_ = false;
+                aiCalRunning_ = true;
+                doCalibration = true;
+            }
+        }
+        if (doCalibration) {
+            std::vector<float> runs;
+            runs.reserve(256);
+            std::vector<uint8_t> calOut(localOut.size());
+            const auto calStart = std::chrono::steady_clock::now();
+            while (true) {
+                const float elapsed = std::chrono::duration<float, std::milli>(
+                    std::chrono::steady_clock::now() - calStart).count();
+                if (elapsed >= kCalibrateMs) break;
+                // Teardown must not wait three seconds for this. stopAiWorker()
+                // joins this thread, and a join that long on the main thread is
+                // an ANR (10.3c).
+                {
+                    std::lock_guard<std::mutex> calLock(aiMutex_);
+                    if (aiShutdown_) break;
+                }
+                InferenceTimings t{};
+                if (!espcnEngine_.process(localIn.data(), w, h, calOut.data(),
+                                          w * scale, h * scale, t)) {
+                    break;
+                }
+                runs.push_back(t.totalMs);
+                // A cap as well as a clock, so a network fast enough to run
+                // thousands of times cannot allocate without bound.
+                if (runs.size() >= 4096) break;
+            }
+            std::lock_guard<std::mutex> calLock(aiMutex_);
+            aiCalRunning_ = false;
+            if (!runs.empty()) {
+                std::sort(runs.begin(), runs.end());
+                aiCalRunMin_ = runs.front();
+                // Running minimum across presses - see PerformanceStats.
+                if (aiCalMin_ <= 0.0f || runs.front() < aiCalMin_) {
+                    aiCalMin_ = runs.front();
+                }
+                aiCalMed_ = runs[runs.size() / 2];
+                aiCalMax_ = runs.back();
+                aiCalRuns_ = (int)runs.size();
+                aiCalHasResult_ = true;
+            }
+        }
+
         lock.lock();
         aiBusy_ = false;
         if (ok) {
             aiOutput_.swap(localOut);
             if (wantUiMask) aiUiMask_.swap(localUiMask);
             aiResultReady_ = true;
-            aiLastMs_ = ms;
+            aiLastTimings_ = timings;
             aiScrollVx_ = vxSmooth;
             aiScrollVy_ = vySmooth;
             aiScrollConf_ = lastConf;
@@ -1136,6 +1202,85 @@ void GlRenderer::aiWorkerLoop() {
             aiFailed_ = true;
         }
     }
+}
+
+namespace {
+
+/**
+ * Percentile of a copy of the window.
+ *
+ * A copy because the window has to stay in arrival order - it is a ring, and
+ * sorting it in place would corrupt which slot the next sample overwrites.
+ * 32 floats, so the copy and the sort together are far below the cost of the
+ * inference that just produced the sample.
+ */
+float percentileOf(const float* samples, int count, float q) {
+    if (count <= 0) return 0.0f;
+    float sorted[GlRenderer::kAiWindow];
+    for (int i = 0; i < count; ++i) sorted[i] = samples[i];
+    std::sort(sorted, sorted + count);
+    int idx = (int)(q * (float)(count - 1) + 0.5f);
+    if (idx < 0) idx = 0;
+    if (idx >= count) idx = count - 1;
+    return sorted[idx];
+}
+
+} // namespace
+
+void GlRenderer::pushAiTimings(const InferenceTimings& t) {
+    const unsigned slot = aiWinCount_ % (unsigned)kAiWindow;
+    aiWinTotal_[slot] = t.totalMs;
+    aiWinGpu_[slot] = t.gpuMs;
+    aiWinCpu_[slot] = t.cpuMs;
+    ++aiWinCount_;
+
+    const int have = aiWinCount_ < (unsigned)kAiWindow ? (int)aiWinCount_ : kAiWindow;
+    stats_.aiMs = percentileOf(aiWinTotal_, have, 0.5f);
+    stats_.aiP95Ms = percentileOf(aiWinTotal_, have, 0.95f);
+    stats_.aiGpuMs = percentileOf(aiWinGpu_, have, 0.5f);
+    stats_.aiCpuMs = percentileOf(aiWinCpu_, have, 0.5f);
+
+    // Only once the window is a quarter full: the median of two or three
+    // results is not a median, and a floor set from one is a floor that never
+    // rises again.
+    if (have >= kAiWindow / 4 && stats_.aiMs > 0.0f &&
+        (stats_.aiFloorMs <= 0.0f || stats_.aiMs < stats_.aiFloorMs)) {
+        stats_.aiFloorMs = stats_.aiMs;
+    }
+}
+
+void GlRenderer::requestAiCalibration() {
+    if (!espcnEngine_.isReady()) {
+        ALOGW("Calibration ignored: no network loaded.");
+        return;
+    }
+    std::lock_guard<std::mutex> lock(aiMutex_);
+    if (aiCalRunning_ || aiCalRequested_) return;
+    aiCalRequested_ = true;
+    // aiCalMin_ is deliberately NOT cleared: pressing again is how the answer
+    // converges on the fast clock state. Only a model change resets it.
+    ALOGI("AI calibration requested (%.0f ms burst).", kCalibrateMs);
+}
+
+void GlRenderer::resetAiTimings() {
+    aiWinCount_ = 0;
+    stats_.aiMs = 0.0f;
+    stats_.aiP95Ms = 0.0f;
+    stats_.aiFloorMs = 0.0f;
+    // The calibration result describes the network that was loaded when it ran.
+    // NOT locked: the two callers that swap models stop the worker first, and
+    // the failure path already holds aiMutex_ - taking it here would deadlock
+    // that one.
+    aiCalRequested_ = false;
+    aiCalHasResult_ = false;
+    aiCalMin_ = aiCalRunMin_ = aiCalMed_ = aiCalMax_ = 0.0f;
+    aiCalRuns_ = 0;
+    stats_.aiCalState = 0;
+    stats_.aiCalMinMs = stats_.aiCalRunMinMs = 0.0f;
+    stats_.aiCalMedMs = stats_.aiCalMaxMs = 0.0f;
+    stats_.aiCalRuns = 0;
+    stats_.aiGpuMs = 0.0f;
+    stats_.aiCpuMs = 0.0f;
 }
 
 bool GlRenderer::ensureAiTextures() {
@@ -1300,12 +1445,26 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
     bool uploadReady = false;
     {
         std::lock_guard<std::mutex> lock(aiMutex_);
+        // Calibration state rides along in the stats snapshot rather than
+        // getting its own JNI call: the main thread must never take a pipeline
+        // lock to read a few floats (10.3a), and this is already the one place
+        // that holds aiMutex_ on the render thread every frame.
+        stats_.aiCalState = aiCalRunning_ ? 1 : (aiCalHasResult_ ? 2 : 0);
+        stats_.aiCalMinMs = aiCalMin_;
+        stats_.aiCalRunMinMs = aiCalRunMin_;
+        stats_.aiCalMedMs = aiCalMed_;
+        stats_.aiCalMaxMs = aiCalMax_;
+        stats_.aiCalRuns = aiCalRuns_;
         if (aiFailed_) {
             aiFailed_ = false;
             espcnFailureStreak_++;
             if (espcnFailureStreak_ > 8) {
                 ALOGE("ESPCN failed %d times in a row - falling back to the shader path.",
                       espcnFailureStreak_);
+                // Nothing is inferring any more, so the HUD must stop quoting a
+                // cost for it. Otherwise the last good number outlives the
+                // network by the rest of the session.
+                resetAiTimings();
                 return false;
             }
         }
@@ -1313,7 +1472,7 @@ bool GlRenderer::runEspcnPass(GLuint externalTexId, int frameWidth, int frameHei
         if (aiResultReady_ && aiOutput_.size() == expected) {
             aiResultReady_ = false;
             uploadReady = true;
-            stats_.aiMs = aiLastMs_;
+            pushAiTimings(aiLastTimings_);
             // Taken with the depth, not separately: the velocity and the frame
             // it was measured at have to describe the same result, or the
             // compensation is extrapolating from the wrong instant.
