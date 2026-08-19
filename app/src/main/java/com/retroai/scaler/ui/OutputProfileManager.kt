@@ -3,6 +3,8 @@ package com.retroai.scaler.ui
 import android.content.Context
 import android.graphics.Rect
 import android.os.Build
+import androidx.annotation.StringRes
+import com.retroai.scaler.R
 
 /**
  * Console presets. Native resolutions are what the emulator core actually
@@ -10,17 +12,19 @@ import android.os.Build
  * the AI network's input) is derived from these numbers.
  */
 enum class ConsoleType(
-    val displayName: String,
+    @StringRes val labelRes: Int,
     val nativeWidth: Int,
     val nativeHeight: Int,
     val aspectRatioName: String
 ) {
-    GBA("GBA", 240, 160, "3:2"),
-    GBC("GBC/GB", 160, 144, "10:9"),
-    SFC("SFC/SNES", 256, 224, "8:7"),
-    FC("FC/NES", 256, 240, "4:3"),
-    MD("MD/Genesis", 320, 224, "4:3"),
-    PS1("PS1/街机", 320, 240, "4:3");
+    GBA(R.string.console_gba, 240, 160, "3:2"),
+    GBC(R.string.console_gbc, 160, 144, "10:9"),
+    SFC(R.string.console_sfc, 256, 224, "8:7"),
+    FC(R.string.console_fc, 256, 240, "4:3"),
+    MD(R.string.console_md, 320, 224, "4:3"),
+    PS1(R.string.console_ps1, 320, 240, "4:3");
+
+    fun label(context: Context): String = context.getString(labelRes)
 
     val aspectRatio: Float
         get() = nativeWidth.toFloat() / nativeHeight.toFloat()
@@ -48,11 +52,13 @@ enum class CaptureMode { WHOLE_SCREEN, SINGLE_APP }
  * display including our own overlay, so painting on top of the area we sample
  * from would feed our output straight back into the capture.
  */
-enum class SourceCorner(val displayName: String) {
-    TOP_LEFT("左上"),
-    TOP_RIGHT("右上"),
-    BOTTOM_LEFT("左下"),
-    BOTTOM_RIGHT("右下");
+enum class SourceCorner(@StringRes val labelRes: Int) {
+    TOP_LEFT(R.string.corner_top_left),
+    TOP_RIGHT(R.string.corner_top_right),
+    BOTTOM_LEFT(R.string.corner_bottom_left),
+    BOTTOM_RIGHT(R.string.corner_bottom_right);
+
+    fun label(context: Context): String = context.getString(labelRes)
 
     /**
      * RetroArch's video_viewport_bias_* are normalised 0..1, which is why they
@@ -72,14 +78,14 @@ enum class SourceCorner(val displayName: String) {
  * Which upscaler runs. SHADER needs no weights; the ESPCN variants load a
  * .param/.bin pair whose name also encodes the AI factor.
  */
-enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
+enum class UpscaleEngine(@StringRes val labelRes: Int, val assetVariant: String?) {
     /**
      * Scale2x-style edge reconstruction. For 2D sprite art this beats the
      * network outright: pixel art has no lost detail to recover, it has
      * staircases that should have been diagonals, and that is a comparison
      * problem rather than a regression problem.
      */
-    PIXEL_EDGE("像素边缘重建", null),
+    PIXEL_EDGE(R.string.engine_pixel_edge, null),
 
     /**
      * A LOOK, not a network: pixel-edge reconstruction with the depth-driven
@@ -91,17 +97,17 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      * a separate switch with its own slider for as long as they were being
      * tuned, which is not a decision anyone should have to make twice.
      */
-    HD2D("HD-2D 光影", null),
-    SHADER("GPU 锐化", null),
-    ESPCN_FAST("ESPCN Fast", "fast"),
-    ESPCN_HQ("ESPCN HQ", "hq"),
+    HD2D(R.string.engine_hd2d, null),
+    SHADER(R.string.engine_shader, null),
+    ESPCN_FAST(R.string.engine_espcn_fast, "fast"),
+    ESPCN_HQ(R.string.engine_espcn_hq, "hq"),
 
     /**
      * ~30x the arithmetic of HQ. Only viable with ncnn on Vulkan, i.e. a recent
      * mobile GPU; on an older handheld it falls back to CPU and will not keep
      * up, which the UI says out loud rather than silently stuttering.
      */
-    ESPCN_ULTRA("ESPCN Ultra (需高端 GPU)", "ultra"),
+    ESPCN_ULTRA(R.string.engine_espcn_ultra, "ultra"),
 
     /**
      * A different aim from the ESPCN family, not just a bigger one. Those
@@ -121,7 +127,7 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      * PS1 and arcade material, with real gradients and dithering, is where it
      * would earn its place, and the weights ship already.
      */
-    RETROAI("RetroAI（重绘 · 需旗舰 GPU）", "retroai"),
+    RETROAI(R.string.engine_retroai, "retroai"),
 
     /**
      * Diagnostic: shows the estimated depth map instead of a picture.
@@ -135,7 +141,7 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      * 3 channels in, 1 out, and no upscaling: depth is low-frequency enough to
      * compute at native resolution, which is most of why it is affordable.
      */
-    DEPTH("深度图（调试）", "depth");
+    DEPTH(R.string.engine_depth, "depth");
 
     /**
      * Not offered in the menu. Both are reachable by setting the engine
@@ -143,6 +149,8 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
      * a route that was measured out for this content.
      */
     val isHidden: Boolean get() = this == RETROAI || this == DEPTH
+
+    fun label(context: Context): String = context.getString(labelRes)
 
     val usesNetwork: Boolean get() = assetVariant != null
     /** Ultra and RetroAI are both unusable without GPU inference. */
@@ -175,11 +183,13 @@ enum class UpscaleEngine(val displayName: String, val assetVariant: String?) {
  * decided by the largest integer multiple that fits the free space.
  */
 /** CRT mask geometry, indexed by screen pixel like the real thing. */
-enum class MaskType(val id: Int, val displayName: String) {
-    NONE(0, "关闭"),
-    APERTURE(1, "光栅"),
-    SHADOW(2, "荫罩"),
-    SLOT(3, "狭缝")
+enum class MaskType(val id: Int, @StringRes val labelRes: Int) {
+    NONE(0, R.string.mask_none),
+    APERTURE(1, R.string.mask_aperture),
+    SHADOW(2, R.string.mask_shadow),
+    SLOT(3, R.string.mask_slot);
+
+    fun label(context: Context): String = context.getString(labelRes)
 }
 
 enum class AiScale(val factor: Int, val label: String) {
@@ -398,14 +408,19 @@ data class RenderProfile(
     fun getOutputScale(screenWidth: Int, screenHeight: Int): Int =
         (getOutputRect(screenWidth, screenHeight).width() / console.nativeWidth).coerceAtLeast(1)
 
-    fun getSummaryText(screenWidth: Int, screenHeight: Int): String {
+    fun getSummaryText(context: Context, screenWidth: Int, screenHeight: Int): String {
         val out = getOutputRect(screenWidth, screenHeight)
         val k = getOutputScale(screenWidth, screenHeight)
         val src = getSourceRect(screenWidth, screenHeight)
-        val origin = if (detectedSourceRect != null) "已探测" else sourceCorner.displayName
-        return "${console.displayName} ${console.nativeWidth}×${console.nativeHeight} " +
-                "→ ${out.width()}×${out.height()}（整数 ${k}x）\n" +
-                "取景窗 ${src.width()}×${src.height()} @ (${src.left}, ${src.top}) $origin"
+        val origin = if (detectedSourceRect != null) {
+            context.getString(R.string.corner_detected)
+        } else {
+            sourceCorner.label(context)
+        }
+        return context.getString(
+            R.string.console_plan,
+            src.width(), src.height(), origin, out.width(), out.height(), k
+        )
     }
 
     /**

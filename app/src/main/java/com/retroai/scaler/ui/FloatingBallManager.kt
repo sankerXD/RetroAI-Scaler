@@ -441,7 +441,7 @@ class FloatingBallManager(
                 // can be read off directly instead of through logcat.
                 Toast.makeText(
                     context,
-                    profile.getSummaryText(screenWidth, screenHeight),
+                    profile.getSummaryText(context, screenWidth, screenHeight),
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -459,20 +459,20 @@ class FloatingBallManager(
                 // A Toast is invisible from here - TYPE_TOAST sits at window
                 // layer 2005 and this overlay at 2038, so the enhanced picture
                 // is painted straight over it.
-                text = "校准中…画面会静止约 3 秒"
+                setText(R.string.calibrate_running)
                 nativeBridge.nativeCalibrateAi()
             }
         }
 
         // 5. Retro Shaders
         val tvScanline = root.findViewById<TextView>(R.id.tvScanlineLabel)
-        tvScanline.text = "CRT 扫描线强度  ${(profile.scanlineIntensity * 100).toInt()}%"
+        tvScanline.text = context.getString(R.string.menu_scanline, (profile.scanlineIntensity * 100).toInt())
         root.findViewById<SeekBar>(R.id.seekbarScanline).apply {
             progress = (profile.scanlineIntensity * 100).toInt()
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     profile.scanlineIntensity = progress / 100f
-                    tvScanline.text = "CRT 扫描线强度  $progress%"
+                    tvScanline.text = context.getString(R.string.menu_scanline, progress)
                     applyRenderProfile()
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -567,7 +567,7 @@ class FloatingBallManager(
         val outChannels = if (profile.hd2dEnabled) 1 else profile.engine.modelOutChannels
         // The depth net maps native resolution to itself.
         val modelScale = if (profile.hd2dEnabled || profile.engine.ignoresAiScale) 1 else scaleFactor
-        val engineName = profile.engine.displayName
+        val engineName = profile.engine.label(context)
         val generation = engineGeneration.incrementAndGet()
 
         engineExecutor.execute {
@@ -585,10 +585,10 @@ class FloatingBallManager(
                 if (nativeBridge.nativeLoadEspcnModel(param, bin, modelScale, true, inChannels, outChannels)) {
                     null
                 } else {
-                    "$engineName 加载失败，已回退"
+                    context.getString(R.string.toast_engine_load_failed, engineName)
                 }
             } catch (e: Exception) {
-                "模型文件缺失，已回退到像素边缘重建"
+                context.getString(R.string.toast_model_missing)
             }
 
             // A newer selection already superseded this one - stay quiet and
@@ -677,9 +677,9 @@ class FloatingBallManager(
         val button = captureButton ?: return
         val count = recorder.countFor(profile.console)
         button.text = when {
-            burstRemaining > 0 -> "连拍中… 还剩 $burstRemaining"
-            lastCaptureMessage == null -> "截取原生帧（长按连拍）"
-            else -> "截取原生帧　已存 $count"
+            burstRemaining > 0 -> context.getString(R.string.capture_burst, burstRemaining)
+            lastCaptureMessage == null -> context.getString(R.string.capture_button)
+            else -> context.getString(R.string.capture_button_count, count)
         }
     }
 
@@ -688,14 +688,14 @@ class FloatingBallManager(
         target.text = if (isAutoCapturing) {
             // The last outcome is worth surfacing: most auto-capture calls are
             // deliberate skips, and without it a stalled counter looks broken.
-            "停止自动采集　${recorder.countFor(profile.console)} 张\n${lastCaptureMessage ?: ""}"
+            context.getString(R.string.capture_auto_stop, recorder.countFor(profile.console), lastCaptureMessage ?: "")
         } else {
-            "开始自动采集"
+            context.getString(R.string.capture_auto_start)
         }
     }
 
     private fun updateGuideButtonText(button: Button) {
-        button.text = if (profile.showSourceGuide) "隐藏取景框" else "显示取景框"
+        button.setText(if (profile.showSourceGuide) R.string.menu_hide_guide else R.string.menu_show_guide)
     }
 
     private fun syncEngineChipToProfile() {
@@ -778,14 +778,14 @@ class FloatingBallManager(
      */
     private fun applyRetroArchConfig() {
         if (!RetroArchConfigManager.hasAllFilesAccess()) {
-            Toast.makeText(context, "需要「所有文件访问」权限，请在主界面授权", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, R.string.toast_need_all_files_main, Toast.LENGTH_LONG).show()
             context.startActivity(RetroArchConfigManager.allFilesAccessIntent(context))
             return
         }
 
         val manager = RetroArchConfigManager(context)
         if (manager.findConfigRoot() == null) {
-            Toast.makeText(context, "没找到 RetroArch/config 目录", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, R.string.toast_no_ra_config_dir, Toast.LENGTH_LONG).show()
             return
         }
 
@@ -793,7 +793,7 @@ class FloatingBallManager(
         if (folders.isEmpty()) {
             Toast.makeText(
                 context,
-                "没找到 ${profile.console.displayName} 对应的核心配置目录，请先在 RA 里跑一次该平台游戏",
+                context.getString(R.string.toast_no_core_dir_for, profile.console.label(context)),
                 Toast.LENGTH_LONG
             ).show()
             return
@@ -803,7 +803,7 @@ class FloatingBallManager(
         // startup; this is the last-chance check.
         val backup = manager.ensureFreshBackup()
         if (!backup.ok) {
-            Toast.makeText(context, "备份失败，已取消写入：${backup.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, context.getString(R.string.toast_backup_failed, backup.message), Toast.LENGTH_LONG).show()
             return
         }
 
@@ -824,7 +824,7 @@ class FloatingBallManager(
         }
         Toast.makeText(
             context,
-            if (result.ok) "${result.message}\n重启 RA 后请重新【自动探测】" else result.message,
+            if (result.ok) context.getString(R.string.toast_config_written, result.message) else result.message,
             Toast.LENGTH_LONG
         ).show()
     }
@@ -836,7 +836,7 @@ class FloatingBallManager(
      * repack's own overrides do.
      */
     fun detectSourceWindow(silent: Boolean = false) {
-        if (!silent) Toast.makeText(context, "正在探测游戏画面位置…", Toast.LENGTH_SHORT).show()
+        if (!silent) Toast.makeText(context, R.string.toast_detecting, Toast.LENGTH_SHORT).show()
 
         // Our own floating windows are part of the captured screen too - the
         // ball is a bright round blob and the detector happily locked onto it.
@@ -866,7 +866,7 @@ class FloatingBallManager(
                     if (!silent) {
                         Toast.makeText(
                             context,
-                            "已锁定画面: ${detected.width()}×${detected.height()} @ (${detected.left}, ${detected.top})",
+                            context.getString(R.string.toast_detect_locked, detected.width(), detected.height(), detected.left, detected.top),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -879,7 +879,7 @@ class FloatingBallManager(
                     if (!silent) {
                         Toast.makeText(
                             context,
-                            "没找到游戏画面。确认游戏正在显示、且不是全黑画面",
+                            context.getString(R.string.toast_detect_failed),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -915,12 +915,12 @@ class FloatingBallManager(
     private fun clearDetectedWindow() {
         profile.detectedSourceRect = null
         applyRenderProfile()
-        Toast.makeText(context, "已改回按角落计算的取景窗", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, R.string.toast_corner_restored, Toast.LENGTH_SHORT).show()
     }
 
     private fun restoreRetroArchConfig() {
         if (!RetroArchConfigManager.hasAllFilesAccess()) {
-            Toast.makeText(context, "需要「所有文件访问」权限", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, R.string.toast_need_all_files, Toast.LENGTH_LONG).show()
             return
         }
         // Restores from the newest snapshot and KEEPS it, so repeated
@@ -942,7 +942,7 @@ class FloatingBallManager(
     }
 
     private fun triadLabel(value: Float): String =
-        "遮罩强度  ${(value * 100).toInt()}%"
+        context.getString(R.string.menu_mask, (value * 100).toInt())
 
     private fun applyRenderProfile() {
         nativeBridge.nativeSetMaskType(profile.maskType.id)
@@ -1041,13 +1041,13 @@ class FloatingBallManager(
         val runMinMs = stats[12]
         val medMs = stats[13]
         val runs = stats[15].toInt()
-        val floor = if (floorMs > 0.01f) "运行中 %.1f".format(floorMs) else "运行中 --"
+        val floor = if (floorMs > 0.01f) context.getString(R.string.calibrate_live, floorMs)
+                    else context.getString(R.string.calibrate_live_none)
         button.text = when {
-            state == 1 -> "校准中…画面会静止约 3 秒"
+            state == 1 -> context.getString(R.string.calibrate_running)
             state == 2 && runs > 0 ->
-                "校准 %.1f / %s ms（本次 %.1f 中位 %.1f · %d 次）"
-                    .format(bestMs, floor, runMinMs, medMs, runs)
-            else -> "校准 AI 耗时　（%s ms）".format(floor)
+                context.getString(R.string.calibrate_done, bestMs, floor, runMinMs, medMs, runs)
+            else -> context.getString(R.string.calibrate_idle, floor)
         }
     }
 
@@ -1082,16 +1082,20 @@ class FloatingBallManager(
         // surface, and putting a debugging surface in the player's menu makes
         // it worse for both audiences.
         val aiText = if (aiMs > 0.01f) {
-            val suffix = if (backend != null) "异步 · $backend" else "异步"
-            "AI 推理 %.1f ms（%s）".format(aiMs, suffix)
+            val suffix = if (backend != null) {
+                context.getString(R.string.hud_ai_async_backend, backend)
+            } else {
+                context.getString(R.string.hud_ai_async)
+            }
+            context.getString(R.string.hud_ai, aiMs, suffix)
         } else {
-            "AI 推理 未启用"
+            context.getString(R.string.hud_ai_off)
         }
         menuView?.findViewById<TextView>(R.id.tvPerformanceHud)?.text =
-            ("帧率 %.1f FPS\n" +
-                    "GPU 耗时 %.1f ms（采样 %.1f + 渲染 %.1f）· 垂直同步 %.1f ms\n" +
-                    "%s")
-                .format(fps, captureMs + renderMs, captureMs, renderMs, swapMs, aiText)
+            context.getString(R.string.hud_fps, fps) + "\n" +
+                    context.getString(
+                        R.string.hud_gpu, captureMs + renderMs, captureMs, renderMs, swapMs
+                    ) + "\n" + aiText
     }
 
     fun release() {

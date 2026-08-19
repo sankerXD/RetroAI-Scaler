@@ -15,8 +15,12 @@ android {
         // Launchers cache the icon by package and version, so reinstalling at
         // the same version leaves the old one on the home screen no matter what
         // is in the APK. Bump this when the icon changes.
+        // versionCode is an opaque counter that may only ever go up, and it is
+        // already at 2 from an icon change. It deliberately does NOT track
+        // versionName - resetting it to 1 for the 1.0 release would be a
+        // downgrade to anything already installed.
         versionCode = 2
-        versionName = "1.1.0"
+        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         

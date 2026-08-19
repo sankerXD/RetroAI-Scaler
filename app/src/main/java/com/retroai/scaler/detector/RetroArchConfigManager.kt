@@ -1,6 +1,7 @@
 package com.retroai.scaler.detector
 
 import android.content.Context
+import com.retroai.scaler.R
 import android.content.Intent
 import android.graphics.Rect
 import android.net.Uri
@@ -97,14 +98,14 @@ class RetroArchConfigManager(private val context: Context) {
      * deletes them.
      */
     fun backupManager(): RetroArchBackupManager? =
-        findConfigRoot()?.let { RetroArchBackupManager(it) }
+        findConfigRoot()?.let { RetroArchBackupManager(context, it) }
 
     fun ensureFreshBackup(): RetroArchBackupManager.Result {
         if (!hasAllFilesAccess()) {
-            return RetroArchBackupManager.Result(false, "缺少「所有文件访问」权限")
+            return RetroArchBackupManager.Result(false, context.getString(R.string.cfg_no_all_files))
         }
         val manager = backupManager()
-            ?: return RetroArchBackupManager.Result(false, "没找到 RetroArch/config 目录")
+            ?: return RetroArchBackupManager.Result(false, context.getString(R.string.cfg_no_config_dir))
         return manager.ensureFreshBackup()
     }
 
@@ -113,10 +114,10 @@ class RetroArchConfigManager(private val context: Context) {
 
     fun restoreFromLatestBackup(): RetroArchBackupManager.Result {
         if (!hasAllFilesAccess()) {
-            return RetroArchBackupManager.Result(false, "缺少「所有文件访问」权限")
+            return RetroArchBackupManager.Result(false, context.getString(R.string.cfg_no_all_files))
         }
         val manager = backupManager()
-            ?: return RetroArchBackupManager.Result(false, "没找到 RetroArch/config 目录")
+            ?: return RetroArchBackupManager.Result(false, context.getString(R.string.cfg_no_config_dir))
         return manager.restoreFromLatest(MARKERS)
     }
 
@@ -164,10 +165,10 @@ class RetroArchConfigManager(private val context: Context) {
         disableShader: Boolean
     ): Result {
         if (!hasAllFilesAccess()) {
-            return Result(false, "缺少「所有文件访问」权限，无法写入 RetroArch 配置")
+            return Result(false, context.getString(R.string.cfg_no_all_files_write))
         }
         if (folders.isEmpty()) {
-            return Result(false, "没找到该平台的 RetroArch 核心配置目录")
+            return Result(false, context.getString(R.string.cfg_no_core_dir))
         }
 
         val values = mutableMapOf(
@@ -212,9 +213,10 @@ class RetroArchConfigManager(private val context: Context) {
         }
 
         return when {
-            patched == 0 -> Result(false, "写入失败：${failures.joinToString().ifEmpty { "没有可写的 .cfg" }}")
-            failures.isEmpty() -> Result(true, "已写入 $patched 个配置文件，重启 RetroArch 或重新载入游戏生效")
-            else -> Result(true, "已写入 $patched 个，失败 ${failures.size} 个")
+            patched == 0 -> Result(false, context.getString(R.string.cfg_write_failed,
+                failures.joinToString().ifEmpty { context.getString(R.string.cfg_no_writable_cfg) }))
+            failures.isEmpty() -> Result(true, context.getString(R.string.cfg_written, patched))
+            else -> Result(true, context.getString(R.string.cfg_written_partial, patched, failures.size))
         }
     }
 

@@ -1,0 +1,184 @@
+<resources>
+    <!--
+        values-zh, not values-zh-rCN: this catches every Chinese variant
+        (zh-Hans, zh-Hant, zh-TW, zh-HK) rather than only mainland Simplified.
+        The text is Simplified, which is what the project is written in; a
+        Traditional reader gets Simplified rather than English, which is the
+        better of the two wrong answers.
+
+        Strings absent from this file fall back to values/ (English). That is
+        why app_name and the pure-ASCII engine names are not repeated here.
+    -->
+    <string name="app_subtitle">RA 模拟器实时 AI 超分外挂层</string>
+
+    <string name="status_service_running">AI 增强引擎运行中</string>
+    <string name="status_service_stopped">AI 增强引擎已停止</string>
+    <string name="btn_start_service">启动 AI 增强滤镜</string>
+    <string name="btn_stop_service">停止外挂服务</string>
+    <string name="hw_detecting">硬件检测中…</string>
+    <string name="usage_hint">使用指南：启动 AI 增强后，等待捕获完成，在天马 G 启动游戏</string>
+
+    <string name="section_console">游玩机种</string>
+    <string name="btn_change">更换</string>
+    <string name="console_plan">取景窗 %1$d×%2$d %3$s → 输出 %4$d×%5$d（整数 %6$dx）\n启动时会自动写入 RetroArch 配置</string>
+    <string name="dialog_pick_console_title">选择游玩机种</string>
+    <string name="console_picker_item">%1$s  %2$d×%3$d</string>
+    <string name="dialog_stop_first_title">需要先停止 AI 增强</string>
+    <string name="dialog_stop_first_message">机种是在增强启动时读取的，运行中切换不会生效，还会让 RetroArch 停在上一个机种的取景窗上。\n\n停止增强会同时还原 RetroArch 配置，请等通知栏的常驻项消失后再启动。</string>
+    <string name="dialog_stop_and_pick">停止并选择</string>
+
+    <string name="section_permissions">核心权限配置</string>
+    <string name="btn_grant">授权</string>
+    <string name="btn_granted">已授权 ✓</string>
+    <string name="permission_overlay_title">悬浮窗权限 (Overlay)</string>
+    <string name="permission_overlay_desc">用于在 RetroArch 上层显示 AI 渲染画面与悬浮球菜单</string>
+    <string name="permission_usage_title">使用情况访问 (Usage Access)</string>
+    <string name="permission_usage_desc">用于判断 RetroArch 是否在前台。未授予时增强层会一直盖在所有应用上，你将看不见桌面和其他 App。</string>
+    <string name="permission_storage_title">所有文件访问 (All Files)</string>
+    <string name="permission_storage_desc">用于把取景窗自动写进 RetroArch/config 下的核心覆盖配置。RA 主配置在 Android/data 里，安卓 11 起任何应用都无法访问，只能走覆盖配置。</string>
+    <string name="permission_capture_title">屏幕捕获权限 (MediaProjection)</string>
+    <string name="permission_capture_desc">用于获取游戏原生显存帧并在 Native 层直接进行 GPU/AI 增强</string>
+
+    <string name="target_app_detecting">目标应用: 检测中…</string>
+    <string name="target_app_not_found">目标应用: 未找到 RetroArch，请手动选择</string>
+    <string name="target_app_label">目标应用: %1$s%2$s</string>
+    <string name="target_app_auto_suffix">（自动检测）</string>
+    <string name="dialog_pick_app_title">选择要增强的应用</string>
+
+    <string name="section_language">语言</string>
+    <string name="language_system">跟随系统</string>
+    <string name="dialog_pick_language_title">语言</string>
+    <string name="toast_language_restart_service">重启 AI 增强后，悬浮菜单也会跟着切换</string>
+
+    <string name="toast_no_capture_permission">未授予录屏捕获权限，无法启动 AI 增强</string>
+    <string name="toast_restored_stale_config">检测到上次未还原的 RetroArch 配置，已自动还原</string>
+    <string name="toast_open_all_files_switch">打开「允许管理所有文件」开关</string>
+    <string name="toast_all_files_ready">所有文件访问已就绪</string>
+    <string name="toast_find_in_list">在列表里找到 RetroAI-Scaler 并打开开关</string>
+    <string name="toast_usage_ready">使用情况访问已就绪</string>
+    <string name="toast_overlay_ready">悬浮窗权限已就绪</string>
+    <string name="toast_no_apps">没有可选应用</string>
+    <string name="toast_restart_to_apply">重启 AI 增强后生效</string>
+    <string name="toast_grant_overlay_first">请先授予悬浮窗权限</string>
+    <string name="btn_cancel">取消</string>
+
+    <string name="menu_title">Retro AI 控制中心</string>
+    <string name="menu_section_picture">画面</string>
+    <string name="menu_enable_ai">启用 AI 超分</string>
+    <string name="menu_section_viewport">取景</string>
+    <string name="menu_detect_source">自动探测游戏画面位置</string>
+    <string name="menu_show_guide">显示取景框</string>
+    <string name="menu_hide_guide">隐藏取景框</string>
+    <string name="menu_restore_ra_config">还原 RetroArch 配置</string>
+    <string name="menu_section_retro">复古质感模拟</string>
+    <string name="menu_scanline">CRT 扫描线强度  %1$d%%</string>
+    <string name="menu_mask">遮罩强度  %1$d%%</string>
+    <string name="menu_calibrate">校准 AI 耗时</string>
+    <string name="menu_stop_service">停止 AI 增强</string>
+
+    <string name="calibrate_running">校准中…画面会静止约 3 秒</string>
+    <string name="calibrate_idle">校准 AI 耗时　（%1$s ms）</string>
+    <string name="calibrate_done">校准 %1$.1f / %2$s ms（本次 %3$.1f 中位 %4$.1f · %5$d 次）</string>
+    <string name="calibrate_live">运行中 %1$.1f</string>
+    <string name="calibrate_live_none">运行中 --</string>
+
+    <string name="hud_fps">帧率 %1$.1f FPS</string>
+    <string name="hud_gpu">GPU 耗时 %1$.1f ms（采样 %2$.1f + 渲染 %3$.1f）· 垂直同步 %4$.1f ms</string>
+    <string name="hud_ai">AI 推理 %1$.1f ms（%2$s）</string>
+    <string name="hud_ai_async">异步</string>
+    <string name="hud_ai_async_backend">异步 · %1$s</string>
+    <string name="hud_ai_off">AI 推理 未启用</string>
+
+    <string name="toast_engine_load_failed">%1$s 加载失败，已回退</string>
+    <string name="toast_model_missing">模型文件缺失，已回退到像素边缘重建</string>
+    <string name="toast_need_all_files_main">需要「所有文件访问」权限，请在主界面授权</string>
+    <string name="toast_need_all_files">需要「所有文件访问」权限</string>
+    <string name="toast_no_ra_config_dir">没找到 RetroArch/config 目录</string>
+    <string name="toast_no_core_dir_for">没找到 %1$s 对应的核心配置目录，请先在 RA 里跑一次该平台游戏</string>
+    <string name="toast_backup_failed">备份失败，已取消写入：%1$s</string>
+    <string name="toast_config_written">%1$s\n重启 RA 后请重新【自动探测】</string>
+    <string name="toast_detecting">正在探测游戏画面位置…</string>
+    <string name="toast_detect_locked">已锁定画面: %1$d×%2$d @ (%3$d, %4$d)</string>
+    <string name="toast_detect_failed">没找到游戏画面。确认游戏正在显示、且不是全黑画面</string>
+    <string name="toast_corner_restored">已改回按角落计算的取景窗</string>
+
+    <string name="notif_title">RetroAI-Scaler 运行中</string>
+    <string name="notif_action_menu">控制菜单</string>
+    <string name="notif_action_stop">停止</string>
+    <string name="notif_no_usage_access">未授予「使用情况访问」，将始终渲染</string>
+    <string name="notif_no_target">未找到 RetroArch，将始终渲染</string>
+    <string name="notif_rendering">增强中 · %1$s</string>
+    <string name="notif_idle">待机中 · 等待 %1$s 切到前台</string>
+
+    <string name="toast_no_frames">没有捕获到任何画面，已停止（请检查录屏权限）</string>
+    <string name="toast_backup_done">RetroArch 配置已备份\n%1$s</string>
+    <string name="toast_no_core_dir">没找到 %1$s 的核心配置目录，请先在 RA 里跑一次该平台游戏</string>
+    <string name="toast_configured_restart">已配置 %1$s，请重启 RetroArch</string>
+    <string name="banner_capture_mode_changed">捕获方式已变更\n请关闭 RetroArch，重新载入游戏</string>
+    <string name="toast_capture_mode_mismatch">捕获方式与预期不同，已重新配置\n请重启 RetroArch 后重新载入游戏</string>
+    <string name="toast_capture_start_failed">录屏捕获启动失败，已停止 AI 增强</string>
+    <string name="toast_render_init_failed">渲染引擎初始化失败，已停止 AI 增强</string>
+    <string name="toast_rotate_render_failed">旋转后渲染引擎重建失败，已停止 AI 增强</string>
+    <string name="toast_rotate_capture_failed">旋转后录屏重建失败，已停止 AI 增强</string>
+
+    <string name="console_ps1">PS1/街机</string>
+
+    <string name="corner_top_left">左上</string>
+    <string name="corner_top_right">右上</string>
+    <string name="corner_bottom_left">左下</string>
+    <string name="corner_bottom_right">右下</string>
+    <string name="corner_detected">已探测</string>
+
+    <string name="engine_pixel_edge">像素边缘重建</string>
+    <string name="engine_hd2d">HD-2D 光影</string>
+    <string name="engine_shader">GPU 锐化</string>
+    <string name="engine_espcn_ultra">ESPCN Ultra（需高端 GPU）</string>
+    <string name="engine_retroai">RetroAI（重绘 · 需旗舰 GPU）</string>
+    <string name="engine_depth">深度图（调试）</string>
+
+    <string name="mask_none">关闭</string>
+    <string name="mask_aperture">光栅</string>
+    <string name="mask_shadow">荫罩</string>
+    <string name="mask_slot">狭缝</string>
+
+    <string name="cfg_no_all_files">缺少「所有文件访问」权限</string>
+    <string name="cfg_no_all_files_write">缺少「所有文件访问」权限，无法写入 RetroArch 配置</string>
+    <string name="cfg_no_config_dir">没找到 RetroArch/config 目录</string>
+    <string name="cfg_no_core_dir">没找到该平台的 RetroArch 核心配置目录</string>
+    <string name="cfg_write_failed">写入失败：%1$s</string>
+    <string name="cfg_no_writable_cfg">没有可写的 .cfg</string>
+    <string name="cfg_written">已写入 %1$d 个配置文件，重启 RetroArch 或重新载入游戏生效</string>
+    <string name="cfg_written_partial">已写入 %1$d 个，失败 %2$d 个</string>
+
+    <string name="backup_reason_first">首次备份</string>
+    <string name="backup_reason_stale">备份已超过 %1$d 天</string>
+    <string name="backup_reason_manual">手动备份</string>
+    <string name="backup_fresh_enough">备份是 %1$d 天前的，无需重新备份</string>
+    <string name="backup_mkdir_failed">无法创建备份目录（检查「所有文件访问」权限）</string>
+    <string name="backup_done">已备份 %1$d 个配置文件 (%2$d KB)\n%3$s</string>
+    <string name="backup_kept">\n保留 %1$d/%2$d 份</string>
+    <string name="backup_pruned">，已清理 %1$d 份最旧的</string>
+    <string name="backup_none_available">没有任何备份可用</string>
+    <string name="backup_incomplete">备份 %1$s 不完整</string>
+    <string name="backup_restored">已从备份 %2$s 还原 %1$d 个文件</string>
+    <string name="backup_restored_kept">\n（备份已保留，共 %1$d 份）</string>
+    <string name="backup_restore_missing">\n⚠ %1$d 个文件在该备份中找不到:\n</string>
+    <string name="backup_note_header">RetroAI-Scaler 配置备份</string>
+    <string name="backup_note_time">时间: %1$s</string>
+    <string name="backup_note_reason">原因: %1$s</string>
+    <string name="backup_note_source">来源: %1$s</string>
+    <string name="backup_note_files">文件: %1$d 个 (%2$d KB)，跳过 %3$d 个大文件/BIOS</string>
+    <string name="backup_note_main_config">注意: RetroArch 主配置 retroarch.cfg 位于\nAndroid/data/com.retroarch.aarch64/files/ 下，安卓 11 起\n第三方应用无法访问，因此不在此备份内。\n本工具也从不修改主配置，只写核心覆盖配置。</string>
+
+    <string name="capture_no_frame">没有取到画面（游戏未在前台？）</string>
+    <string name="capture_bad_size">画面尺寸异常 %1$dx%2$d</string>
+    <string name="capture_flat">画面几乎是纯色（载入/淡出？），已跳过</string>
+    <string name="capture_duplicate">画面与上一张几乎相同，已跳过</string>
+    <string name="capture_saved">已保存 %1$s</string>
+    <string name="capture_save_failed">保存失败：%1$s</string>
+    <string name="capture_burst">连拍中… 还剩 %1$d</string>
+    <string name="capture_button">截取原生帧（长按连拍）</string>
+    <string name="capture_button_count">截取原生帧　已存 %1$d</string>
+    <string name="capture_auto_stop">停止自动采集　%1$d 张\n%2$s</string>
+    <string name="capture_auto_start">开始自动采集</string>
+</resources>

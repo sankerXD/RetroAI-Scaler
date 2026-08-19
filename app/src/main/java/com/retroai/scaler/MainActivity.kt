@@ -18,7 +18,9 @@ import androidx.core.content.ContextCompat
 import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
+import com.retroai.scaler.ui.AppLanguage
 import com.retroai.scaler.ui.ConsoleType
+import com.retroai.scaler.ui.LocaleHelper
 import com.retroai.scaler.ui.ProfilePreference
 import com.retroai.scaler.service.OverlayService
 
@@ -39,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvOutputPlan: TextView
     private lateinit var btnPickConsole: Button
     private lateinit var btnPickTargetApp: Button
+    private lateinit var btnPickLanguage: Button
 
     private val foregroundMonitor by lazy { ForegroundAppMonitor(this) }
 
@@ -51,8 +54,20 @@ class MainActivity : AppCompatActivity() {
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             startOverlayService(result.resultCode, result.data!!)
         } else {
-            Toast.makeText(this, "未授予录屏捕获权限，无法启动 AI 增强", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.toast_no_capture_permission, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * Applies the stored language before any resource is resolved.
+     *
+     * Following the SYSTEM language needs nothing here - Android already picks
+     * values-zh/ or falls back to values/. This exists for the override, and
+     * has to be attachBaseContext rather than anything later: by onCreate the
+     * theme and the layout have already been resolved against the old locale.
+     */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,7 +104,7 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         Toast.makeText(
                             this,
-                            "检测到上次未还原的 RetroArch 配置，已自动还原",
+                            getString(R.string.toast_restored_stale_config),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -110,10 +125,10 @@ class MainActivity : AppCompatActivity() {
 
         btnGrantStorage.setOnClickListener {
             if (!RetroArchConfigManager.hasAllFilesAccess()) {
-                Toast.makeText(this, "打开「允许管理所有文件」开关", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, R.string.toast_open_all_files_switch, Toast.LENGTH_LONG).show()
                 startActivity(RetroArchConfigManager.allFilesAccessIntent(this))
             } else {
-                Toast.makeText(this, "所有文件访问已就绪", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.toast_all_files_ready, Toast.LENGTH_SHORT).show()
             }
         }
         tvTargetApp = findViewById(R.id.tvTargetApp)
@@ -121,14 +136,18 @@ class MainActivity : AppCompatActivity() {
 
         btnGrantUsage.setOnClickListener {
             if (!ForegroundAppMonitor.hasUsageAccess(this)) {
-                Toast.makeText(this, "在列表里找到 RetroAI-Scaler 并打开开关", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, R.string.toast_find_in_list, Toast.LENGTH_LONG).show()
                 startActivity(ForegroundAppMonitor.usageAccessSettingsIntent())
             } else {
-                Toast.makeText(this, "使用情况访问已就绪", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.toast_usage_ready, Toast.LENGTH_SHORT).show()
             }
         }
 
         btnPickTargetApp.setOnClickListener { showTargetAppPicker() }
+
+        btnPickLanguage = findViewById(R.id.btnPickLanguage)
+        btnPickLanguage.setOnClickListener { showLanguagePicker() }
+        updateLanguageLabel()
 
         tvConsole = findViewById(R.id.tvConsole)
         tvOutputPlan = findViewById(R.id.tvOutputPlan)
@@ -143,7 +162,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 startActivity(intent)
             } else {
-                Toast.makeText(this, "悬浮窗权限已就绪", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.toast_overlay_ready, Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -179,15 +198,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun updatePermissionButtons() {
         val hasOverlay = Settings.canDrawOverlays(this)
-        btnGrantOverlay.text = if (hasOverlay) "已授权 ✓" else "授权"
+        btnGrantOverlay.setText(if (hasOverlay) R.string.btn_granted else R.string.btn_grant)
         btnGrantOverlay.isEnabled = !hasOverlay
 
         val hasUsage = ForegroundAppMonitor.hasUsageAccess(this)
-        btnGrantUsage.text = if (hasUsage) "已授权 ✓" else "授权"
+        btnGrantUsage.setText(if (hasUsage) R.string.btn_granted else R.string.btn_grant)
         btnGrantUsage.isEnabled = !hasUsage
 
         val hasStorage = RetroArchConfigManager.hasAllFilesAccess()
-        btnGrantStorage.text = if (hasStorage) "已授权 ✓" else "授权"
+        btnGrantStorage.setText(if (hasStorage) R.string.btn_granted else R.string.btn_grant)
         btnGrantStorage.isEnabled = !hasStorage
 
         updateTargetAppLabel()
@@ -199,6 +218,41 @@ class MainActivity : AppCompatActivity() {
      * service writes RetroArch's config the moment enhancement starts, and it
      * needs to know which core to configure before any menu has been opened.
      */
+    private fun updateLanguageLabel() {
+        btnPickLanguage.text = LocaleHelper.labelOf(this, LocaleHelper.stored(this))
+    }
+
+    /**
+     * Recreates the Activity so the new language is applied through
+     * attachBaseContext.
+     *
+     * The running service is NOT restarted: the floating menu inflates its
+     * views once when the service starts, so its strings are fixed for that
+     * session. Tearing the pipeline down to change a label would cost the user
+     * their capture window and their RetroArch config write, which is a far
+     * worse trade than one line of text - so say so instead of doing it.
+     */
+    private fun showLanguagePicker() {
+        val options = AppLanguage.values()
+        val labels = options.map { LocaleHelper.labelOf(this, it) }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.dialog_pick_language_title)
+            .setItems(labels) { _, which ->
+                if (options[which] == LocaleHelper.stored(this)) return@setItems
+                LocaleHelper.store(this, options[which])
+                if (isServiceRunning) {
+                    Toast.makeText(
+                        this,
+                        R.string.toast_language_restart_service,
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                recreate()
+            }
+            .setNegativeButton(R.string.btn_cancel, null)
+            .show()
+    }
+
     private fun showConsolePicker() {
         // Switching while enhancement runs does not work and never did, which
         // was not visible from here.
@@ -220,17 +274,14 @@ class MainActivity : AppCompatActivity() {
         // same black screen.
         if (isServiceRunning) {
             AlertDialog.Builder(this)
-                .setTitle("需要先停止 AI 增强")
-                .setMessage(
-                    "机种是在增强启动时读取的，运行中切换不会生效，还会让 RetroArch 停在上一个机种的取景窗上。\n\n" +
-                            "停止增强会同时还原 RetroArch 配置，请等通知栏的常驻项消失后再启动。"
-                )
-                .setPositiveButton("停止并选择") { _, _ ->
+                .setTitle(R.string.dialog_stop_first_title)
+                .setMessage(R.string.dialog_stop_first_message)
+                .setPositiveButton(R.string.dialog_stop_and_pick) { _, _ ->
                     stopOverlayService()
                     updateServiceStateUi()
                     showConsoleList()
                 }
-                .setNegativeButton("取消", null)
+                .setNegativeButton(R.string.btn_cancel, null)
                 .show()
             return
         }
@@ -240,24 +291,26 @@ class MainActivity : AppCompatActivity() {
     private fun showConsoleList() {
         val consoles = ConsoleType.values()
         val labels = consoles
-            .map { "${it.displayName}  ${it.nativeWidth}×${it.nativeHeight}" }
+            .map { getString(R.string.console_picker_item, it.label(this), it.nativeWidth, it.nativeHeight) }
             .toTypedArray()
         AlertDialog.Builder(this)
-            .setTitle("选择游玩机种")
+            .setTitle(R.string.dialog_pick_console_title)
             .setItems(labels) { _, which ->
                 // Only the console key changes; that console's own saved
                 // settings are then loaded as-is.
                 ProfilePreference.setConsole(this, consoles[which])
                 updateConsoleLabel()
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(R.string.btn_cancel, null)
             .show()
     }
 
     private fun updateConsoleLabel() {
         val profile = ProfilePreference.load(this)
-        tvConsole.text = "${profile.console.displayName} " +
-                "${profile.console.nativeWidth}×${profile.console.nativeHeight}"
+        tvConsole.text = getString(
+            R.string.console_picker_item,
+            profile.console.label(this), profile.console.nativeWidth, profile.console.nativeHeight
+        )
 
         val metrics = android.util.DisplayMetrics()
         @Suppress("DEPRECATION")
@@ -265,19 +318,21 @@ class MainActivity : AppCompatActivity() {
         val out = profile.getOutputRect(metrics.widthPixels, metrics.heightPixels)
         val k = profile.getOutputScale(metrics.widthPixels, metrics.heightPixels)
         val src = profile.getPlannedSourceRect(metrics.widthPixels, metrics.heightPixels)
-        tvOutputPlan.text = "取景窗 ${src.width()}×${src.height()} ${profile.sourceCorner.displayName}" +
-                " → 输出 ${out.width()}×${out.height()}（整数 ${k}x）\n" +
-                "启动时会自动写入 RetroArch 配置"
+        tvOutputPlan.text = getString(
+            R.string.console_plan,
+            src.width(), src.height(), profile.sourceCorner.label(this),
+            out.width(), out.height(), k
+        )
     }
 
     private fun updateTargetAppLabel() {
         val stored = TargetAppPreference.get(this)
         val detected = stored ?: foregroundMonitor.detectRetroArch()
         tvTargetApp.text = if (detected == null) {
-            "目标应用: 未找到 RetroArch，请手动选择"
+            getString(R.string.target_app_not_found)
         } else {
-            val suffix = if (stored == null) "（自动检测）" else ""
-            "目标应用: ${foregroundMonitor.labelFor(detected)}$suffix"
+            val suffix = if (stored == null) getString(R.string.target_app_auto_suffix) else ""
+            getString(R.string.target_app_label, foregroundMonitor.labelFor(detected), suffix)
         }
     }
 
@@ -288,20 +343,20 @@ class MainActivity : AppCompatActivity() {
     private fun showTargetAppPicker() {
         val apps = foregroundMonitor.launchableApps()
         if (apps.isEmpty()) {
-            Toast.makeText(this, "没有可选应用", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.toast_no_apps, Toast.LENGTH_SHORT).show()
             return
         }
         val labels = apps.map { "${it.label}\n${it.packageName}" }.toTypedArray()
         AlertDialog.Builder(this)
-            .setTitle("选择要增强的应用")
+            .setTitle(R.string.dialog_pick_app_title)
             .setItems(labels) { _, which ->
                 TargetAppPreference.set(this, apps[which].packageName)
                 updateTargetAppLabel()
                 if (isServiceRunning) {
-                    Toast.makeText(this, "重启 AI 增强后生效", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, R.string.toast_restart_to_apply, Toast.LENGTH_LONG).show()
                 }
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(R.string.btn_cancel, null)
             .show()
     }
 
@@ -334,7 +389,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestStartPipeline() {
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.toast_grant_overlay_first, Toast.LENGTH_SHORT).show()
             return
         }
 

@@ -47,7 +47,7 @@
                 style="@style/MenuSectionLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="画面" />
+                android:text="@string/menu_section_picture" />
 
         <HorizontalScrollView
             android:layout_width="match_parent"
@@ -135,7 +135,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="启用 AI 超分"
+                    android:text="@string/menu_enable_ai"
                     android:textColor="@color/text_primary"
                     android:textSize="13sp" />
 
@@ -164,7 +164,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="true"
-                    android:text="像素边缘重建"
+                    android:text="@string/engine_pixel_edge"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"
@@ -176,7 +176,7 @@
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="HD-2D 光影"
+                    android:text="@string/engine_hd2d"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"
@@ -188,7 +188,7 @@
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="GPU 锐化"
+                    android:text="@string/engine_shader"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"
@@ -245,14 +245,14 @@
                 style="@style/MenuSectionLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="取景" />
+                android:text="@string/menu_section_viewport" />
 
             <Button
                 android:id="@+id/btnDetectSource"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="match_parent"
                 android:layout_height="38dp"
-                android:text="自动探测游戏画面位置"
+                android:text="@string/menu_detect_source"
                 android:textColor="@color/primary"
                 android:textSize="12sp"
                 app:strokeColor="@color/primary" />
@@ -262,7 +262,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="38dp"
                 android:layout_marginTop="6dp"
-                android:text="显示取景框"
+                android:text="@string/menu_show_guide"
                 android:textColor="@color/primary"
                 android:textSize="12sp"
                 app:strokeColor="@color/primary" />
@@ -272,7 +272,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="38dp"
                 android:layout_marginTop="6dp"
-                android:text="还原 RetroArch 配置"
+                android:text="@string/menu_restore_ra_config"
                 android:textColor="@color/accent_orange"
                 android:textSize="12sp"
                 app:strokeColor="@color/accent_orange" />
@@ -289,14 +289,13 @@
                 style="@style/MenuSectionLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="复古质感模拟" />
+                android:text="@string/menu_section_retro" />
 
             <TextView
                 android:id="@+id/tvScanlineLabel"
                 style="@style/MenuFieldLabel"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="CRT 扫描线强度  0%" />
+                android:layout_height="wrap_content" />
 
             <SeekBar
                 android:id="@+id/seekbarScanline"
@@ -310,8 +309,7 @@
                 style="@style/MenuFieldLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="遮罩强度  0%" />
+                android:layout_marginTop="8dp" />
 
             <SeekBar
                 android:id="@+id/seekbarLcdGrid"
@@ -338,7 +336,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:checked="true"
-                    android:text="关闭"
+                    android:text="@string/mask_none"
                     android:textColor="@color/chip_text_color"
                     app:checkedIconVisible="false"
                     app:chipBackgroundColor="@color/chip_bg_color"
@@ -414,7 +412,7 @@
             android:layout_width="match_parent"
             android:layout_height="38dp"
             android:layout_marginTop="6dp"
-            android:text="校准 AI 耗时"
+            android:text="@string/menu_calibrate"
             android:textColor="@color/primary"
             android:textSize="12sp"
             android:visibility="gone"
@@ -426,7 +424,7 @@
             android:layout_width="match_parent"
             android:layout_height="40dp"
             android:layout_marginTop="10dp"
-            android:text="停止 AI 增强"
+            android:text="@string/menu_stop_service"
             android:textColor="@color/accent_red"
             android:textSize="13sp"
             app:strokeColor="@color/accent_red" />

@@ -1256,3 +1256,45 @@ FC 是这四台里帧缓冲**最大**的，GB 最小，排序完全吻合。吞�
 > **拒绝是对的，拒绝一次就放弃不对。** 10.2 那条"宁可拒绝也不能放行"只说了判据该多严，没说失败之后该怎么办。
 
 现在失败会重试：`AUTO_DETECT_ATTEMPTS = 5`、间隔 `AUTO_DETECT_RETRY_MS = 4000`，覆盖约 20 秒，一旦锁上立刻停。间隔必须大于 `detectSourceWindow()` 自己那 3 秒轮询——两次探测同时在飞会互相把对方要测的帧擦掉。可见代价是探测失败期间悬浮球会闪几下（探测必须撤掉自己的窗口），而那段时间画面本来就在错的位置上。
+
+---
+
+## 16. 中英双语（2026-08）
+
+英文是**默认**（`values/`），中文在 `values-zh/`。方向是故意的：`values/` 是所有非中文语言的兜底，日语或德语系统拿到英文，而不是一门它们大概率读不懂的语言。**"跟随系统"因此不需要任何代码**——安卓自己按目录选。用 `values-zh` 而不是 `values-zh-rCN`，繁体系统会拿到简体，那是两个错误答案里较好的那个。
+
+### 16.1 手动切换必须包装 Service 的 Context，不能只包装 Activity
+
+用 `attachBaseContext(LocaleHelper.wrap(newBase))`，**`MainActivity` 和 `OverlayService` 两处都要**。
+
+> **只包装 Activity 的表现是"主界面英文、悬浮窗中文"，而且看起来像漏翻译。** 玩家在游戏里看到的一切——悬浮菜单、每一条 Toast、通知栏——都是从**服务**的 context 取的，不是 Activity 的。第一版漏了这一处，排查时的关键线索是"跟随系统正常、手动切换才错"：跟随系统那条路径根本不需要包装。
+
+不能用 `AppCompatDelegate.setApplicationLocales`：它驱动的是 Activity 重建，**API 33 以下对 Service 无话可说**，而 minSdk 是 30——两台实测机正好都在它够不着的区间里。
+
+**切换语言不重启服务。** 悬浮菜单的视图在服务启动时 inflate，那一次的字符串就定死了。为一行文字把用户的取景窗和已写好的 RA 配置拆掉不划算，所以改成弹一句"重启 AI 增强后悬浮菜单也会跟着切换"。
+
+### 16.2 枚举的显示名是资源，不是构造参数里的字面量
+
+`ConsoleType` / `SourceCorner` / `UpscaleEngine` / `MaskType` 现在带 `@StringRes labelRes` 和 `label(context)`。
+
+改之前确认过它们**只用于显示和日志**：目录名、SharedPreferences 的 key 走的都是 `enum.name`。**如果哪个枚举的显示名参与过持久化，改它就等于让已有数据全部失联**——这是动这类枚举前唯一要查的事。日志里原来用 `displayName` 的两处改成了 `name`：**日志不该跟着界面语言变**。
+
+### 16.3 别拿本地化文案当逻辑判据
+
+`OverlayService` 里曾经有一行：
+
+```kotlin
+if (result.ok && result.message.startsWith("已备份")) { ... }
+```
+
+用**用户可见文案**决定要不要弹提示。中文单语时它一直是对的，翻译上线的那一刻必然静默失效——而且失效方式是"提示不弹了"，没有任何报错。现在 `RetroArchBackupManager.Result` 带 `createdSnapshot: Boolean`，判这个。
+
+**凡是 `Result(ok, message)` 这种形状，`message` 就只能给人看。** 需要分支就加字段。
+
+### 16.4 备份规则文件曾经自相矛盾
+
+`data_extraction_rules.xml`（API 31+）排除一切，而 `backup_rules.xml` 是个空的 `<full-backup-content>`——**空的意思是全部备份**。minSdk 30 走后者，所以同一个 App 在安卓 11 上全量备份、在 12 上一点不备份。而且排除项还漏了必需的 `domain` 属性，本身就是非法的。
+
+现在只有 `android:allowBackup="false"` 一句，两个文件都删了。排除一切本来就是原意，只是写错了地方两次。
+
+> **`lintVitalRelease` 只在 release 构建跑**，所以这个错误一直藏到第一次打正式包才暴露。日常 `assembleDebug` 永远看不到它——发版前至少跑一次 `./gradlew lintVitalRelease`。

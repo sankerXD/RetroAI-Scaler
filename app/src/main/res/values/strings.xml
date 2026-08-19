@@ -1,19 +1,215 @@
 <resources>
-    <string name="app_name">RetroAI Scaler</string>
-    <string name="app_subtitle">RA 模拟器实时 AI 超分外挂层</string>
-    <string name="status_service_running">AI 增强引擎运行中</string>
-    <string name="status_service_stopped">AI 增强引擎已停止</string>
-    <string name="btn_start_service">启动 AI 增强滤镜</string>
-    <string name="btn_stop_service">停止外挂服务</string>
-    <string name="permission_overlay_title">悬浮窗权限 (Overlay)</string>
-    <string name="permission_overlay_desc">用于在 RetroArch 上层显示 AI 渲染画面与悬浮球菜单</string>
-    <string name="permission_usage_title">使用情况访问 (Usage Access)</string>
-    <string name="permission_usage_desc">用于判断 RetroArch 是否在前台。未授予时增强层会一直盖在所有应用上，你将看不见桌面和其他 App。</string>
-    <string name="permission_storage_title">所有文件访问 (All Files)</string>
-    <string name="permission_storage_desc">用于把取景窗自动写进 RetroArch/config 下的核心覆盖配置。RA 主配置在 Android/data 里，安卓 11 起任何应用都无法访问，只能走覆盖配置。</string>
-    <string name="permission_capture_title">屏幕捕获权限 (MediaProjection)</string>
-    <string name="permission_capture_desc">用于获取游戏原生显存帧并在 Native 层直接进行 GPU/AI 增强</string>
-    
-    <!-- Floating Ball & Menu Strings -->
-    <string name="menu_title">Retro AI 控制中心</string>
+    <!--
+        ENGLISH IS THE DEFAULT, Chinese lives in values-zh/.
+
+        That direction is deliberate: values/ is what every locale that is not
+        Chinese falls back to, so a device set to Japanese, German or anything
+        else gets English rather than a language it almost certainly cannot
+        read. Following the system language needs no code for this - Android
+        picks the folder. The in-app switcher exists only to OVERRIDE that.
+
+        Anything with a format argument keeps the positional form (%1$s) so a
+        translation is free to reorder it.
+    -->
+    <string name="app_name" translatable="false">RetroAI Scaler</string>
+    <string name="app_subtitle">Real-time AI upscaling layer for RetroArch</string>
+
+    <!-- Main screen: status and the big button -->
+    <string name="status_service_running">AI enhancement running</string>
+    <string name="status_service_stopped">AI enhancement stopped</string>
+    <string name="btn_start_service">Start AI enhancement</string>
+    <string name="btn_stop_service">Stop the service</string>
+    <string name="hw_detecting">Detecting hardware…</string>
+    <string name="usage_hint">How to use: start AI enhancement, wait for capture to begin, then launch a game from your frontend</string>
+
+    <!-- Main screen: console section -->
+    <string name="section_console">Console</string>
+    <string name="btn_change">Change</string>
+    <string name="console_plan">Capture window %1$d×%2$d %3$s → output %4$d×%5$d (integer %6$dx)\nWritten into RetroArch\'s config on start</string>
+    <string name="dialog_pick_console_title">Choose the console you are playing</string>
+    <string name="console_picker_item">%1$s  %2$d×%3$d</string>
+    <string name="dialog_stop_first_title">Stop AI enhancement first</string>
+    <string name="dialog_stop_first_message">The console is read when enhancement starts, so switching while it runs has no effect - and it leaves RetroArch on the previous console\'s capture window.\n\nStopping also restores RetroArch\'s config. Wait for the notification to disappear before starting again.</string>
+    <string name="dialog_stop_and_pick">Stop and choose</string>
+
+    <!-- Main screen: permissions -->
+    <string name="section_permissions">Required permissions</string>
+    <string name="btn_grant">Grant</string>
+    <string name="btn_granted">Granted ✓</string>
+    <string name="permission_overlay_title">Display over other apps (Overlay)</string>
+    <string name="permission_overlay_desc">Draws the enhanced picture and the floating menu on top of RetroArch.</string>
+    <string name="permission_usage_title">Usage access</string>
+    <string name="permission_usage_desc">Tells whether RetroArch is in the foreground. Without it the enhancement layer stays over every app and you cannot see your home screen.</string>
+    <string name="permission_storage_title">All files access</string>
+    <string name="permission_storage_desc">Writes the capture window into the core override configs under RetroArch/config. RetroArch\'s main config lives in Android/data, which no app can reach since Android 11, so overrides are the only route.</string>
+    <string name="permission_capture_title">Screen capture (MediaProjection)</string>
+    <string name="permission_capture_desc">Grabs the game\'s native frames for GPU/AI enhancement in the native layer.</string>
+
+    <!-- Main screen: target app -->
+    <string name="target_app_detecting">Target app: detecting…</string>
+    <string name="target_app_not_found">Target app: RetroArch not found, please pick it manually</string>
+    <string name="target_app_label">Target app: %1$s%2$s</string>
+    <string name="target_app_auto_suffix"> (auto-detected)</string>
+    <string name="dialog_pick_app_title">Choose the app to enhance</string>
+
+    <!-- Main screen: language -->
+    <string name="section_language">Language</string>
+    <string name="language_system">Follow system</string>
+    <string name="language_zh">简体中文</string>
+    <string name="language_en">English</string>
+    <string name="dialog_pick_language_title">Language</string>
+    <string name="toast_language_restart_service">Restart AI enhancement to change the floating menu too</string>
+
+    <!-- Main screen: toasts -->
+    <string name="toast_no_capture_permission">Screen capture was not granted - cannot start AI enhancement</string>
+    <string name="toast_restored_stale_config">Found a RetroArch config left over from last time and restored it</string>
+    <string name="toast_open_all_files_switch">Turn on “Allow management of all files”</string>
+    <string name="toast_all_files_ready">All files access is ready</string>
+    <string name="toast_find_in_list">Find RetroAI-Scaler in the list and turn it on</string>
+    <string name="toast_usage_ready">Usage access is ready</string>
+    <string name="toast_overlay_ready">Overlay permission is ready</string>
+    <string name="toast_no_apps">No apps to choose from</string>
+    <string name="toast_restart_to_apply">Restart AI enhancement to apply</string>
+    <string name="toast_grant_overlay_first">Grant the overlay permission first</string>
+    <string name="btn_cancel">Cancel</string>
+
+    <!-- Floating menu -->
+    <string name="menu_title">Retro AI control</string>
+    <string name="menu_section_picture">Picture</string>
+    <string name="menu_enable_ai">Enable AI upscaling</string>
+    <string name="menu_section_viewport">Capture window</string>
+    <string name="menu_detect_source">Locate the game picture</string>
+    <string name="menu_show_guide">Show the capture frame</string>
+    <string name="menu_hide_guide">Hide the capture frame</string>
+    <string name="menu_restore_ra_config">Restore RetroArch config</string>
+    <string name="menu_section_retro">CRT simulation</string>
+    <string name="menu_scanline">CRT scanline strength  %1$d%%</string>
+    <string name="menu_mask">Mask strength  %1$d%%</string>
+    <string name="menu_calibrate">Calibrate AI cost</string>
+    <string name="menu_stop_service">Stop AI enhancement</string>
+
+    <!-- Floating menu: calibration readout (developer diagnostic, hidden) -->
+    <string name="calibrate_running">Calibrating… the picture holds for ~3 s</string>
+    <string name="calibrate_idle">Calibrate AI cost  (%1$s ms)</string>
+    <string name="calibrate_done">Calibrate %1$.1f / %2$s ms (this run %3$.1f, median %4$.1f · %5$d runs)</string>
+    <string name="calibrate_live">live %1$.1f</string>
+    <string name="calibrate_live_none">live --</string>
+
+    <!-- Floating menu: performance readout -->
+    <string name="hud_fps">%1$.1f FPS</string>
+    <string name="hud_gpu">GPU %1$.1f ms (sample %2$.1f + render %3$.1f) · vsync %4$.1f ms</string>
+    <string name="hud_ai">AI inference %1$.1f ms (%2$s)</string>
+    <string name="hud_ai_async">async</string>
+    <string name="hud_ai_async_backend">async · %1$s</string>
+    <string name="hud_ai_off">AI inference off</string>
+
+    <!-- Floating menu: toasts -->
+    <string name="toast_engine_load_failed">%1$s failed to load, fell back</string>
+    <string name="toast_model_missing">Model files missing, fell back to pixel edge reconstruction</string>
+    <string name="toast_need_all_files_main">“All files access” is required - grant it on the main screen</string>
+    <string name="toast_need_all_files">“All files access” is required</string>
+    <string name="toast_no_ra_config_dir">RetroArch/config directory not found</string>
+    <string name="toast_no_core_dir_for">No core config directory for %1$s - run a game on that platform in RetroArch once first</string>
+    <string name="toast_backup_failed">Backup failed, nothing was written: %1$s</string>
+    <string name="toast_config_written">%1$s\nRestart RetroArch, then run “Locate the game picture” again</string>
+    <string name="toast_detecting">Locating the game picture…</string>
+    <string name="toast_detect_locked">Locked on: %1$d×%2$d @ (%3$d, %4$d)</string>
+    <string name="toast_detect_failed">No game picture found. Check that the game is showing and is not a black screen</string>
+    <string name="toast_corner_restored">Back to the corner-based capture window</string>
+
+    <!-- Service: notification -->
+    <string name="notif_title">RetroAI-Scaler running</string>
+    <string name="notif_action_menu">Menu</string>
+    <string name="notif_action_stop">Stop</string>
+    <string name="notif_no_usage_access">No usage access - always rendering</string>
+    <string name="notif_no_target">RetroArch not found - always rendering</string>
+    <string name="notif_rendering">Enhancing · %1$s</string>
+    <string name="notif_idle">Idle · waiting for %1$s</string>
+
+    <!-- Service: toasts and banners -->
+    <string name="toast_no_frames">No frames were captured, stopped (check the screen capture permission)</string>
+    <string name="toast_backup_done">RetroArch config backed up\n%1$s</string>
+    <string name="toast_no_core_dir">No core config directory for %1$s - run a game on that platform in RetroArch once first</string>
+    <string name="toast_configured_restart">%1$s configured, please restart RetroArch</string>
+    <string name="banner_capture_mode_changed">Capture mode changed\nClose RetroArch and load the game again</string>
+    <string name="toast_capture_mode_mismatch">Capture mode differed from the prediction and was reconfigured\nRestart RetroArch and load the game again</string>
+    <string name="toast_capture_start_failed">Screen capture failed to start, AI enhancement stopped</string>
+    <string name="toast_render_init_failed">The render engine failed to initialise, AI enhancement stopped</string>
+    <string name="toast_rotate_render_failed">The render engine failed to rebuild after rotation, AI enhancement stopped</string>
+    <string name="toast_rotate_capture_failed">Screen capture failed to rebuild after rotation, AI enhancement stopped</string>
+
+    <!-- Consoles -->
+    <string name="console_gba" translatable="false">GBA</string>
+    <string name="console_gbc" translatable="false">GBC/GB</string>
+    <string name="console_sfc" translatable="false">SFC/SNES</string>
+    <string name="console_fc" translatable="false">FC/NES</string>
+    <string name="console_md" translatable="false">MD/Genesis</string>
+    <string name="console_ps1">PS1/Arcade</string>
+
+    <!-- Capture window corners -->
+    <string name="corner_top_left">Top left</string>
+    <string name="corner_top_right">Top right</string>
+    <string name="corner_bottom_left">Bottom left</string>
+    <string name="corner_bottom_right">Bottom right</string>
+    <string name="corner_detected">measured</string>
+
+    <!-- Upscale engines -->
+    <string name="engine_pixel_edge">Pixel edge reconstruction</string>
+    <string name="engine_hd2d">HD-2D lighting</string>
+    <string name="engine_shader">GPU sharpen</string>
+    <string name="engine_espcn_fast" translatable="false">ESPCN Fast</string>
+    <string name="engine_espcn_hq" translatable="false">ESPCN HQ</string>
+    <string name="engine_espcn_ultra">ESPCN Ultra (high-end GPU)</string>
+    <string name="engine_retroai">RetroAI (repaint · flagship GPU)</string>
+    <string name="engine_depth">Depth map (debug)</string>
+
+    <!-- CRT masks -->
+    <string name="mask_none">Off</string>
+    <string name="mask_aperture">Aperture</string>
+    <string name="mask_shadow">Shadow</string>
+    <string name="mask_slot">Slot</string>
+
+    <!-- RetroArch config manager -->
+    <string name="cfg_no_all_files">“All files access” is missing</string>
+    <string name="cfg_no_all_files_write">“All files access” is missing - cannot write the RetroArch config</string>
+    <string name="cfg_no_config_dir">RetroArch/config directory not found</string>
+    <string name="cfg_no_core_dir">No RetroArch core config directory for this platform</string>
+    <string name="cfg_write_failed">Write failed: %1$s</string>
+    <string name="cfg_no_writable_cfg">no writable .cfg</string>
+    <string name="cfg_written">Wrote %1$d config file(s); restart RetroArch or reload the game to apply</string>
+    <string name="cfg_written_partial">Wrote %1$d, failed %2$d</string>
+
+    <!-- Config backups -->
+    <string name="backup_reason_first">first backup</string>
+    <string name="backup_reason_stale">backup is older than %1$d day(s)</string>
+    <string name="backup_reason_manual">manual backup</string>
+    <string name="backup_fresh_enough">The backup is %1$d day(s) old, no new one needed</string>
+    <string name="backup_mkdir_failed">Could not create the backup directory (check “All files access”)</string>
+    <string name="backup_done">Backed up %1$d config file(s) (%2$d KB)\n%3$s</string>
+    <string name="backup_kept">\nKeeping %1$d/%2$d snapshots</string>
+    <string name="backup_pruned">, pruned %1$d oldest</string>
+    <string name="backup_none_available">No backup available</string>
+    <string name="backup_incomplete">Backup %1$s is incomplete</string>
+    <string name="backup_restored">Restored %1$d file(s) from backup %2$s</string>
+    <string name="backup_restored_kept">\n(the backup is kept; %1$d in total)</string>
+    <string name="backup_restore_missing">\n⚠ %1$d file(s) were not in that backup:\n</string>
+    <string name="backup_note_header">RetroAI-Scaler config backup</string>
+    <string name="backup_note_time">Time: %1$s</string>
+    <string name="backup_note_reason">Reason: %1$s</string>
+    <string name="backup_note_source">Source: %1$s</string>
+    <string name="backup_note_files">Files: %1$d (%2$d KB), skipped %3$d large files/BIOS</string>
+    <string name="backup_note_main_config">Note: RetroArch\'s main retroarch.cfg lives under\nAndroid/data/com.retroarch.aarch64/files/, which no third-party\napp can reach since Android 11, so it is not in this backup.\nThis tool never modifies it either - only core overrides.</string>
+
+    <!-- Corpus capture (developer tooling, no menu entry) -->
+    <string name="capture_no_frame">No frame captured (is the game in the foreground?)</string>
+    <string name="capture_bad_size">Unexpected frame size %1$dx%2$d</string>
+    <string name="capture_flat">Frame is almost a flat colour (loading/fade?), skipped</string>
+    <string name="capture_duplicate">Frame is almost identical to the last one, skipped</string>
+    <string name="capture_saved">Saved %1$s</string>
+    <string name="capture_save_failed">Save failed: %1$s</string>
+    <string name="capture_burst">Burst… %1$d left</string>
+    <string name="capture_button">Grab a native frame (long press for a burst)</string>
+    <string name="capture_button_count">Grab a native frame  %1$d saved</string>
+    <string name="capture_auto_stop">Stop auto capture  %1$d saved\n%2$s</string>
+    <string name="capture_auto_start">Start auto capture</string>
 </resources>

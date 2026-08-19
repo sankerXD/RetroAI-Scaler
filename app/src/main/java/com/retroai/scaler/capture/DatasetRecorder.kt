@@ -1,6 +1,7 @@
 package com.retroai.scaler.capture
 
 import android.content.Context
+import com.retroai.scaler.R
 import android.graphics.Bitmap
 import android.os.Environment
 import android.util.Log
@@ -94,23 +95,23 @@ class DatasetRecorder(
         }
         val data = pixels ?: run {
             Log.w(TAG, "no frame after ${MAX_POLLS * POLL_INTERVAL_MS} ms")
-            return Result(false, "没有取到画面（游戏未在前台？）")
+            return Result(false, context.getString(R.string.capture_no_frame))
         }
 
         val w = size[0]
         val h = size[1]
         if (w <= 0 || h <= 0 || data.size < w * h * 4) {
-            return Result(false, "画面尺寸异常 ${w}x${h}")
+            return Result(false, context.getString(R.string.capture_bad_size, w, h))
         }
 
         val thumb = greyThumbnail(data, w, h)
         if (thumb.max() - thumb.min() < MIN_CONTRAST) {
-            return Result(false, "画面几乎是纯色（载入/淡出？），已跳过")
+            return Result(false, context.getString(R.string.capture_flat))
         }
         if (skipSimilar) {
             val previous = lastThumb
             if (previous != null && meanAbsDiff(previous, thumb) < MIN_DIFFERENCE) {
-                return Result(false, "画面与上一张几乎相同，已跳过")
+                return Result(false, context.getString(R.string.capture_duplicate))
             }
         }
 
@@ -118,17 +119,17 @@ class DatasetRecorder(
             val file = write(data, w, h, console)
             lastThumb = thumb
             Log.i(TAG, "saved ${file.absolutePath}")
-            Result(true, "已保存 ${file.name}")
+            Result(true, context.getString(R.string.capture_saved, file.name))
         } catch (e: Exception) {
             Log.e(TAG, "saving frame failed", e)
-            Result(false, "保存失败：${e.message}")
+            Result(false, context.getString(R.string.capture_save_failed, e.message ?: ""))
         }
     }
 
     private fun write(data: ByteArray, w: Int, h: Int, console: ConsoleType): File {
         val dir = File(outputRoot, console.name)
         if (!dir.exists() && !dir.mkdirs()) {
-            throw IllegalStateException("无法创建目录 ${dir.absolutePath}")
+            throw IllegalStateException("cannot create directory ${dir.absolutePath}")
         }
 
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)

@@ -32,6 +32,7 @@ import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
 import com.retroai.scaler.ui.CaptureMode
+import com.retroai.scaler.ui.LocaleHelper
 import com.retroai.scaler.ui.ProfilePreference
 import com.retroai.scaler.jni.NativeBridge
 import com.retroai.scaler.ui.FloatingBallManager
@@ -50,6 +51,23 @@ import com.retroai.scaler.ui.FloatingBallManager
  *  3. If frames stop arriving, the watchdog wipes the overlay transparent.
  */
 class OverlayService : Service(), SurfaceHolder.Callback {
+
+    /**
+     * The language override has to be applied HERE as well as in MainActivity.
+     *
+     * Everything the player sees while a game is running is drawn from this
+     * context, not an Activity's: the floating menu is inflated from it, and
+     * every toast and notification is built with it. Wrapping only the Activity
+     * left the main screen following the manual choice while the overlay stayed
+     * in the system language - which looks like "the translation is missing"
+     * rather than "the context was not wrapped".
+     *
+     * It also cannot be AppCompatDelegate.setApplicationLocales: below API 33
+     * that has nothing to say to a Service, and minSdk here is 30.
+     */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
+    }
 
     companion object {
         private const val TAG = "OverlayService"
@@ -175,7 +193,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                     nativeBridge.nativeClearOverlay()
                     Toast.makeText(
                         this@OverlayService,
-                        "没有捕获到任何画面，已停止（请检查录屏权限）",
+                        getString(R.string.toast_no_frames),
                         Toast.LENGTH_LONG
                     ).show()
                     stopSelf()
@@ -247,9 +265,16 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
                 val result = manager.ensureFreshBackup()
                 Log.i(TAG, "config backup: ${result.message}")
-                if (result.ok && result.message.startsWith("已备份")) {
+                // createdSnapshot, not a prefix test on the message: that
+                // message is user-facing text and testing it made the branch
+                // depend on the display language.
+                if (result.ok && result.createdSnapshot) {
                     mainHandler.post {
-                        Toast.makeText(this, "RetroArch 配置已备份\n${result.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            this,
+                            getString(R.string.toast_backup_done, result.message),
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
 
@@ -272,11 +297,11 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         val profile = ProfilePreference.load(this)
         val folders = manager.coreFoldersFor(profile.console)
         if (folders.isEmpty()) {
-            Log.w(TAG, "no core config folder for ${profile.console.displayName}, skipping auto-write")
+            Log.w(TAG, "no core config folder for ${profile.console.name}, skipping auto-write")
             mainHandler.post {
                 Toast.makeText(
                     this,
-                    "没找到 ${profile.console.displayName} 的核心配置目录，请先在 RA 里跑一次该平台游戏",
+                    getString(R.string.toast_no_core_dir, profile.console.label(this)),
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -295,7 +320,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         mainHandler.post {
             Toast.makeText(
                 this,
-                if (result.ok) "已配置 ${profile.console.displayName}，请重启 RetroArch" else result.message,
+                if (result.ok) getString(R.string.toast_configured_restart, profile.console.label(this)) else result.message,
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -446,7 +471,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         val pad = (resources.displayMetrics.density * 20).toInt()
         val view = TextView(this).apply {
-            text = "捕获方式已变更\n请关闭 RetroArch，重新载入游戏"
+            setText(R.string.banner_capture_mode_changed)
             setTextColor(0xFFFFFFFF.toInt())
             setBackgroundColor(0xE6000000.toInt())
             textSize = 18f
@@ -547,7 +572,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                     mainHandler.post {
                         Toast.makeText(
                             this,
-                            "捕获方式与预期不同，已重新配置\n请重启 RetroArch 后重新载入游戏",
+                            getString(R.string.toast_capture_mode_mismatch),
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -740,7 +765,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             nativeBridge,
             onProfileChanged = { profile ->
                 pushGeometry()
-                Log.d(TAG, "Render profile updated: ${profile.console.displayName} ${profile.getOutputScale(screenWidth, screenHeight)}x")
+                Log.d(TAG, "Render profile updated: ${profile.console.name} ${profile.getOutputScale(screenWidth, screenHeight)}x")
             },
             onServiceStopRequested = {
                 stopSelf()
@@ -786,7 +811,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             }
         )
         if (!bridge.startCapture()) {
-            Toast.makeText(this, "录屏捕获启动失败，已停止 AI 增强", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.toast_capture_start_failed, Toast.LENGTH_LONG).show()
             stopSelf()
             return
         }
@@ -803,7 +828,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         val success = nativeBridge.nativeInit(holder.surface, screenWidth, screenHeight)
         if (!success) {
             Log.e(TAG, "nativeInit failed - tearing down so nothing covers the screen.")
-            Toast.makeText(this, "渲染引擎初始化失败，已停止 AI 增强", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.toast_render_init_failed, Toast.LENGTH_LONG).show()
             stopSelf()
             return
         }
@@ -892,7 +917,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         if (!nativeBridge.nativeInit(holder.surface, width, height)) {
             Log.e(TAG, "nativeInit failed after rotation - tearing down so nothing covers the screen.")
-            Toast.makeText(this, "旋转后渲染引擎重建失败，已停止 AI 增强", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.toast_rotate_render_failed, Toast.LENGTH_LONG).show()
             stopSelf()
             return
         }
@@ -905,7 +930,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         if (bridge != null && !bridge.resizeTo(width, height, screenDensityDpi)) {
             Log.e(TAG, "capture resize failed after rotation - stopping.")
-            Toast.makeText(this, "旋转后录屏重建失败，已停止 AI 增强", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.toast_rotate_capture_failed, Toast.LENGTH_LONG).show()
             stopSelf()
             return
         }
@@ -1014,19 +1039,19 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         val targetLabel = targetPackage?.let { foregroundMonitor?.labelFor(it) }
         val statusText = when {
-            !hasUsageAccess -> "未授予「使用情况访问」，将始终渲染"
-            targetPackage == null -> "未找到 RetroArch，将始终渲染"
-            isRenderingActive -> "增强中 · $targetLabel"
-            else -> "待机中 · 等待 $targetLabel 切到前台"
+            !hasUsageAccess -> getString(R.string.notif_no_usage_access)
+            targetPackage == null -> getString(R.string.notif_no_target)
+            isRenderingActive -> getString(R.string.notif_rendering, targetLabel)
+            else -> getString(R.string.notif_idle, targetLabel)
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("RetroAI-Scaler 运行中")
+            .setContentTitle(getString(R.string.notif_title))
             .setContentText(statusText)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentIntent(pendingIntent)
-            .addAction(android.R.drawable.ic_menu_preferences, "控制菜单", openMenuPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止", stopPendingIntent)
+            .addAction(android.R.drawable.ic_menu_preferences, getString(R.string.notif_action_menu), openMenuPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, getString(R.string.notif_action_stop), stopPendingIntent)
             .setOngoing(true)
             .build()
     }

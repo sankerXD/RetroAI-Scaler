@@ -1,6 +1,8 @@
 package com.retroai.scaler.detector
 
 import android.util.Log
+import android.content.Context
+import com.retroai.scaler.R
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -20,7 +22,7 @@ import java.util.concurrent.TimeUnit
  * app (MANAGE_EXTERNAL_STORAGE does not cover it). We never write that file
  * either - only per-core overrides - so there is nothing there to roll back.
  */
-class RetroArchBackupManager(private val configRoot: File) {
+class RetroArchBackupManager(private val context: Context, private val configRoot: File) {
 
     companion object {
         private const val TAG = "RABackupManager"
@@ -43,7 +45,16 @@ class RetroArchBackupManager(private val configRoot: File) {
         fun backupRoot(): File = File(BACKUP_ROOT)
     }
 
-    data class Result(val ok: Boolean, val message: String)
+    /**
+     * [createdSnapshot] exists so callers stop testing the MESSAGE. One did -
+     * `message.startsWith("已备份")` decided whether to toast - which quietly
+     * tied a branch to the display language.
+     */
+    data class Result(
+        val ok: Boolean,
+        val message: String,
+        val createdSnapshot: Boolean = false
+    )
 
     fun listSnapshots(): List<File> =
         (backupRoot().listFiles { f -> f.isDirectory } ?: emptyArray())
@@ -66,24 +77,24 @@ class RetroArchBackupManager(private val configRoot: File) {
      */
     fun ensureFreshBackup(): Result {
         if (!configRoot.isDirectory) {
-            return Result(false, "没找到 RetroArch/config 目录")
+            return Result(false, context.getString(R.string.cfg_no_config_dir))
         }
         val age = latestSnapshotAgeMs()
         return when {
-            age == null -> createSnapshot("首次备份")
-            age > MAX_AGE_MS -> createSnapshot("备份已超过 ${TimeUnit.MILLISECONDS.toDays(age)} 天")
-            else -> Result(true, "备份是 ${TimeUnit.MILLISECONDS.toDays(age)} 天前的，无需重新备份")
+            age == null -> createSnapshot(context.getString(R.string.backup_reason_first))
+            age > MAX_AGE_MS -> createSnapshot(context.getString(R.string.backup_reason_stale, TimeUnit.MILLISECONDS.toDays(age)))
+            else -> Result(true, context.getString(R.string.backup_fresh_enough, TimeUnit.MILLISECONDS.toDays(age)))
         }
     }
 
-    fun createSnapshot(reason: String = "手动备份"): Result {
+    fun createSnapshot(reason: String = context.getString(R.string.backup_reason_manual)): Result {
         if (!configRoot.isDirectory) {
-            return Result(false, "没找到 RetroArch/config 目录")
+            return Result(false, context.getString(R.string.cfg_no_config_dir))
         }
         val dir = File(backupRoot(), STAMP_FORMAT.format(Date()))
         val target = File(dir, "config")
         if (!target.mkdirs() && !target.isDirectory) {
-            return Result(false, "无法创建备份目录（检查「所有文件访问」权限）")
+            return Result(false, context.getString(R.string.backup_mkdir_failed))
         }
 
         var copied = 0
@@ -110,16 +121,13 @@ class RetroArchBackupManager(private val configRoot: File) {
         try {
             File(dir, MANIFEST).writeText(
                 buildString {
-                    appendLine("RetroAI-Scaler 配置备份")
-                    appendLine("时间: ${Date()}")
-                    appendLine("原因: $reason")
-                    appendLine("来源: ${configRoot.absolutePath}")
-                    appendLine("文件: $copied 个 (${bytes / 1024} KB)，跳过 $skipped 个大文件/BIOS")
+                    appendLine(context.getString(R.string.backup_note_header))
+                    appendLine(context.getString(R.string.backup_note_time, Date().toString()))
+                    appendLine(context.getString(R.string.backup_note_reason, reason))
+                    appendLine(context.getString(R.string.backup_note_source, configRoot.absolutePath))
+                    appendLine(context.getString(R.string.backup_note_files, copied, bytes / 1024, skipped))
                     appendLine()
-                    appendLine("注意: RetroArch 主配置 retroarch.cfg 位于")
-                    appendLine("Android/data/com.retroarch.aarch64/files/ 下，安卓 11 起")
-                    appendLine("第三方应用无法访问，因此不在此备份内。")
-                    appendLine("本工具也从不修改主配置，只写核心覆盖配置。")
+                    appendLine(context.getString(R.string.backup_note_main_config))
                 }
             )
         } catch (e: Exception) {
@@ -132,10 +140,11 @@ class RetroArchBackupManager(private val configRoot: File) {
         return Result(
             true,
             buildString {
-                append("已备份 $copied 个配置文件 (${bytes / 1024} KB)\n${dir.name}")
-                append("\n保留 ${listSnapshots().size}/$MAX_SNAPSHOTS 份")
-                if (pruned > 0) append("，已清理 $pruned 份最旧的")
-            }
+                append(context.getString(R.string.backup_done, copied, bytes / 1024, dir.name))
+                append(context.getString(R.string.backup_kept, listSnapshots().size, MAX_SNAPSHOTS))
+                if (pruned > 0) append(context.getString(R.string.backup_pruned, pruned))
+            },
+            createdSnapshot = true
         )
     }
 
@@ -171,10 +180,10 @@ class RetroArchBackupManager(private val configRoot: File) {
 
     fun restoreFromLatest(markers: List<String>): Result {
         val snapshot = latestSnapshot()
-            ?: return Result(false, "没有任何备份可用")
+            ?: return Result(false, context.getString(R.string.backup_none_available))
         val snapConfig = File(snapshot, "config")
         if (!snapConfig.isDirectory) {
-            return Result(false, "备份 ${snapshot.name} 不完整")
+            return Result(false, context.getString(R.string.backup_incomplete, snapshot.name))
         }
 
         var restored = 0
@@ -216,10 +225,10 @@ class RetroArchBackupManager(private val configRoot: File) {
         }
 
         val message = buildString {
-            append("已从备份 ${snapshot.name} 还原 $restored 个文件")
-            append("\n（备份已保留，共 ${listSnapshots().size} 份）")
+            append(context.getString(R.string.backup_restored, restored, snapshot.name))
+            append(context.getString(R.string.backup_restored_kept, listSnapshots().size))
             if (missing.isNotEmpty()) {
-                append("\n⚠ ${missing.size} 个文件在该备份中找不到:\n")
+                append(context.getString(R.string.backup_restore_missing, missing.size))
                 append(missing.take(4).joinToString("\n"))
             }
         }
