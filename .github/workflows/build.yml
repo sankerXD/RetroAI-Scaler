@@ -12,6 +12,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read by default; the job asks for the one write it needs.
+#
+# Without this block the token inherits the repository default, which is
+# read-only - so everything built and signed correctly and only the very last
+# step failed, with "Resource not accessible by integration". Declaring the
+# scope here rather than flipping the repository setting to read-write keeps
+# every OTHER workflow that may exist later on the safe default.
+permissions:
+  contents: read
+
 env:
   NCNN_VERSION: '20240410'
   NDK_VERSION: '25.2.9519653'
@@ -20,6 +30,11 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    # Needed only by the "Publish release" step, which creates a release and
+    # uploads the APK to it.
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
