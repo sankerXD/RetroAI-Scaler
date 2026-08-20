@@ -260,6 +260,7 @@ JAVA_HOME=<jdk17+> ./gradlew assembleDebug
 ## 7. 已知限制
 
 - **取景窗占掉屏幕一角**，安卓 11 MediaProjection 架构的硬约束。API 34 的单应用捕获可彻底消除；平台签名 + `READ_FRAME_BUFFER` 走 `ScreenCapture.captureLayers` 只截 RA 图层也可以，但需要 OEM 配合。
+- **虚拟显示路线已否**（2026-08-20，Air Mini / Android 11 实测）：shell 创建的虚拟屏没有 `FLAG_TRUSTED`，活动被静默重定向回 display 0；Shizuku 能授的权限上限就是 shell，接了也一样。详见 11.7。
 - AYANEO Air Mini 固件里「系统设置 → Root 脚本」实测**无法执行 .sh**（点运行后一直转圈，脚本从未运行），root 路径在该机型上不可用。
 - ESPCN 通道有 1 帧额外延迟；对操作延迟敏感时用像素边缘重建（零延迟）。
 - **HD-2D 的光影仍比画面晚约半个像素，60Hz 上下摆动，实测"几乎感受不到"。** 这是重投影补偿之后的地板，见 13.12。
@@ -531,6 +532,70 @@ RA 写 `video_viewport_bias_x/y = 0.5`，输出取全屏最大整数倍、**按�
 **渲染时去掉这个标志、暂停时加回**。渲染时本来就已经拦截跨 UID 触摸了（0.8 就在阈值上），去掉它不额外损失任何东西，却拿回 100% 不透明度；而真正需要触摸的时刻（回到桌面）是暂停态，标志和低 alpha 一起恢复。
 
 改这里务必回归测"回桌面能不能点图标"——`updateViewLayout` 更新窗口属性的可靠性在本项目里有前科（见 10.7）。
+
+### 11.7 虚拟显示路线：已否（2026-08-20，Air Mini / Android 11 实测）
+
+设想是绕开第 1 节：让 RA 跑在我们自建的 `VirtualDisplay` 上，物理屏整块留给输出。真通了收益远不止"取景窗消失"——虚拟屏尺寸由我们定，RA 全屏画 240×160 就是 1:1 原生像素，**第 2 节的配置改写、取景窗探测、整数倍吸附、11.2 的模式判定全部作废**，而且在所有安卓版本上同时成立。
+
+**结论：非受信显示承载不了别的应用的活动，这条路在 root 之外没有入口。**
+
+用 scrcpy 3.x 的 `--new-display` 验证（它同样以 shell 身份创建虚拟屏，权限等级和我们能拿到的一样）：
+
+```bash
+scrcpy --new-display=1280x960/320 --no-audio               # 终端 A，占住不放
+adb shell dumpsys display | grep 'DisplayInfo{"scrcpy"'    # 拿 displayId，每次重启都变
+adb shell am start -S --display <id> -n com.android.settings/.Settings
+adb shell dumpsys activity activities | grep -E "Display #|ResumedActivity"
+```
+
+对照组用**系统设置**（标准系统应用，一定支持副屏）——它都过不去，RA 更不必试。
+
+| | 内置屏 (0) | scrcpy 虚拟屏 (71) |
+|---|---|---|
+| flags | `FLAG_DEFAULT_DISPLAY` `FLAG_SECURE` `FLAG_SUPPORTS_PROTECTED_BUFFERS` **`FLAG_TRUSTED`** | `FLAG_ROTATES_WITH_CONTENT` `FLAG_PRESENTATION` `FLAG_OWN_CONTENT_ONLY` |
+| owner | — | `com.android.shell (uid 2000)` |
+
+`am start --display` **不抛异常**，但活动被静默重定向回 display 0：`dumpsys activity activities` 里只有 `Display #0`，虚拟屏那个段落根本不出现。根因是虚拟屏缺 `FLAG_TRUSTED`，而 `ADD_TRUSTED_DISPLAY` 是 signature 级权限。
+
+**Shizuku 一并否掉。** scrcpy 这次就是以 shell 跑的，而 Shizuku 能授的上限正是 shell——**这次失败已经是"接了 Shizuku 之后"的权限等级**。剩下只有 root（Air Mini 上不可用，见第 7 节）和平台签名。
+
+> **两个把人绕进去的假阴性，都不是权限问题，单独记：**
+>
+> 1. **虚拟屏一开始是全黑的。** 它没有 `FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS`，系统不往上面放桌面，OEM launcher 也不声明支持副屏。**那块屏是空的，不是坏的**——停在这里就会把结论记成"虚拟屏出不了画"，完全错。
+> 2. **`am start` 漏了 `-S` 时**会打印 `Warning: Activity not started, its current task has been brought to the front`：目标应用已有 task，就被原地提到前台，`--display` 被完全忽略。命令返回成功、无报错、屏幕照旧全黑——**看返回码等于什么都没测**。
+>
+> 判据只能是 `dumpsys activity activities` 里活动落在哪个 `Display #` 下。这和第 6 节那条 `; adb install` 吞掉构建失败、以及 `check_*.py` 打印 skip 却 exit 0 是同一类东西：**一个不会失败却什么也没验证的步骤**。
+
+第三关这次没走到，但记下来免得以后有人只验前两关就宣布成功：**即使活动能落到虚拟屏上，物理手柄的按键仍未必进得去**。key event 走的是 top focused display 上的焦点窗口，判据是 `dumpsys input | grep -i FocusedDisplay`，而且**必须在掌机上按物理按键验**——scrcpy 是带着 targetDisplayId 从外部注入的，在它窗口里按键一定"能用"，那是假阳性。
+
+### 11.8 整屏模式下让取景窗"看不见"：压暗 + 数值反解（提案，未验证）
+
+**动机**：3.5 寸机型（Pocket Micro / 960×640）上取景窗无法忍受。那块屏和 GBA 同为 3:2，本来 4x 正好铺满；放一个 1x 取景窗之后输出只能退到 3x = 720×480，丢掉 44% 面积，还多一个小画面在角上。1280×960 和竖屏 Elite 上这个代价被富余空间吸收掉了，3.5 寸没有地方藏。
+
+关键认识：**自激的条件是"我们在那块画的东西依赖于我们从那块读到的东西"。**画一层**常数**黑色不构成回路。所以 11.4 那行可以从"挖空"改成"压暗"：
+
+```glsl
+// uSourceDim: 0.0 = 现行行为（逐位等价），0.75 = 只透 25%
+if (uProtectSource != 0 && inside(px, uSourceRect)) {
+    if (uSourceDim <= 0.0) discard;
+    outColor = vec4(0.0, 0.0, 0.0, uSourceDim);
+    return;
+}
+```
+
+采样侧（`Y_EXTRACT`）把取回的值除以 `1 - uSourceDim`。代价是量化精度：α=0.75 掉 2 bit（±0.5 的舍入被放大成 ±2/255），α=0.5 掉 1 bit。
+
+**保留 `discard` 分支不是可选的**：`uSourceDim = 0` 必须逐位等于今天的行为，这样改动天然可回退，出问题能单变量排除。
+
+三件必须做的事：
+
+1. **别假设 blend 是线性的。** SurfaceFlinger 在哪个空间合成不保证。在压暗层下显示 0~255 灰阶、回读、建逐通道 256→256 的 LUT 来反解。12.7 那条"语料颜色不落在 RGB555 网格上"的悬案就在这条链路上，正好顺手测出来。
+2. **判据是逐位相等，不是"看起来差不多"。** 静止画面（RA 暂停）下先按 `uSourceDim=0` 捕一帧当 ground truth，再开压暗捕一帧反解，逐像素比。语料是在无压暗路径上采的、模型跟那条路径绑死（12.7），有残差就是分布漂移，得量出来才知道能不能接受。
+3. **先试 α=0.5**（只掉 1 bit）看观感够不够，不够再往上推。
+
+**会杀死这个方案的是合成时的 dithering**——它把确定性舍入变成空间噪声，反解就不可能精确。第 2 条一跑就知道，不用猜。
+
+> 零成本的替代：捕获发生在 SurfaceFlinger 里，**不在玻璃上**。往取景窗那个角贴一小片哑光贴纸，捕获完全不受影响，眼睛清净。240×160 在 3.5 寸 960×640 上约 16mm×11mm。听着土，但它是这份约束下唯一**不拿画质换**的办法。
 
 ---
 
