@@ -89,6 +89,7 @@
                 at which point it is just a line saying so.
             -->
             <LinearLayout
+                android:id="@+id/cardSetup"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
@@ -227,6 +228,7 @@
 
             <!-- Permissions Card -->
             <LinearLayout
+                android:id="@+id/cardPermissions"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"

@@ -64,6 +64,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnShimCapture: Button
     private lateinit var cardConsole: View
+    private lateinit var cardPermissions: View
+    private lateinit var cardSetup: View
 
     /** Filled in by syncLaunchFiles, read by the status line. */
     @Volatile private var shimCoreCount = 0
@@ -211,6 +213,8 @@ class MainActivity : AppCompatActivity() {
         // and cannot work without one - see updateShimProbeUi.
         cardConsole = findViewById(R.id.cardConsole)
         cardConsole.visibility = View.GONE
+        cardPermissions = findViewById(R.id.cardPermissions)
+        cardSetup = findViewById(R.id.cardSetup)
 
         btnShimProbe = findViewById(R.id.btnShimProbe)
         btnShimDump = findViewById(R.id.btnShimDump)
@@ -363,6 +367,18 @@ class MainActivity : AppCompatActivity() {
         cardConsole.visibility = if (needsCapture) View.VISIBLE else View.GONE
         if (needsCapture) preselectConsoleFromCore()
 
+        /*
+         * Setup is a thing you do once, so it stops being a thing you look at.
+         *
+         * Everything on this screen was a control the whole time, which read as
+         * a box of switches rather than something to play with. Once the
+         * launcher is pointed at the shim there is nothing here to press again
+         * - only a line saying so, and the way back out.
+         */
+        val done = shimConvertedCount > 0
+        btnShimProbe.visibility = if (done) View.GONE else View.VISIBLE
+        btnShimStart.visibility = if (done) View.GONE else View.VISIBLE
+
         val converted = shimConvertedCount
         val total = shimCoreCount
         btnShimDump.isEnabled = converted > 0
@@ -397,6 +413,14 @@ class MainActivity : AppCompatActivity() {
         val hasStorage = RetroArchConfigManager.hasAllFilesAccess()
         btnGrantStorage.setText(if (hasStorage) R.string.btn_granted else R.string.btn_grant)
         btnGrantStorage.isEnabled = !hasStorage
+
+        /*
+         * Once all three are granted there is nothing to grant, and three rows
+         * of "Granted ✓" are just three rows. They come back the moment one is
+         * revoked, which is the only time they say anything.
+         */
+        cardPermissions.visibility =
+            if (hasOverlay && hasUsage && hasStorage) View.GONE else View.VISIBLE
 
         updateTargetAppLabel()
         updateConsoleLabel()
@@ -651,7 +675,12 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(R.string.capture_ready_title)
             .setMessage(R.string.capture_ready_body)
-            .setPositiveButton(R.string.shim_guide_ok, null)
+            // Gets out of the way afterwards. Capture deliberately does not
+            // start while this app is the thing on screen, so staying here
+            // would leave someone looking at a settings page that is, quite
+            // correctly, doing nothing.
+            .setPositiveButton(R.string.shim_guide_ok) { _, _ -> finish() }
+            .setCancelable(false)
             .show()
     }
 
