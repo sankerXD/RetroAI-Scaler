@@ -516,27 +516,17 @@ class FloatingBallManager(
                 applyRenderProfile()
             }
 
-                                                root.findViewById<Button>(R.id.btnToggleGuide).apply {
-            updateGuideButtonText(this)
-            setOnClickListener {
-                profile.showSourceGuide = !profile.showSourceGuide
-                updateGuideButtonText(this)
-                applyRenderProfile()
-                // The numbers behind the ring, so a misaligned capture window
-                // can be read off directly instead of through logcat.
-                Toast.makeText(
-                    context,
-                    profile.getSummaryText(context, screenWidth, screenHeight),
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }
-
-        root.findViewById<Button>(R.id.btnDetectSource).setOnClickListener { detectSourceWindow() }
-        root.findViewById<Button>(R.id.btnDetectSource).setOnLongClickListener {
-            clearDetectedWindow(); true
-        }
-        root.findViewById<Button>(R.id.btnRestoreRaConfig).setOnClickListener { restoreRetroArchConfig() }
+        /*
+         * The capture-window section is gone from the menu.
+         *
+         * Locating the game picture, showing the capture frame and restoring
+         * RetroArch's config were all answers to a problem that no longer
+         * exists: the picture comes from the emulator at its own resolution, so
+         * there is no window to find, nothing to line up, and no config of
+         * RetroArch's that we changed. detectSourceWindow(), the guide toggle
+         * and restoreRetroArchConfig() stay in this file - the capture route
+         * still needs every one of them.
+         */
 
         calibrateButton = root.findViewById<Button>(R.id.btnCalibrateAi).apply {
             setOnClickListener {
