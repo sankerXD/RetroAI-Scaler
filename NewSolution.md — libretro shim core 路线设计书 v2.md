@@ -170,7 +170,15 @@ launch: am start --user 0
 ### 4.2 environment callback 包装要点
 
 - **`RETRO_ENVIRONMENT_SET_PIXEL_FORMAT`(10)**：决定输入像素格式——`0RGB1555=0` / `XRGB8888=1` / `RGB565=2`。shim 必须记录并随帧头传给 APP。
-- **`RETRO_ENVIRONMENT_SET_HW_RENDER`(14)**：真实核心请求硬件渲染（PS1/N64 GPU 核心）时 video cb 给的是 GPU 纹理，**shim 返回 false 拒绝**并打 log，切勿假意接受。
+- **`RETRO_ENVIRONMENT_SET_HW_RENDER`(14)**：~~shim 返回 false 拒绝~~ → **改为原样转发给 RA**（2026-08-22 修正）。
+
+  > 原来那条写"拒绝，切勿假意接受"，是**假设了只能由 shim 来回答**。但 shim 可以把问题交给 RA，而 RA 真的提供硬件渲染——核心于是表现得和没有 shim 时**完全一样**。
+  >
+  > **拒绝会改变核心的行为，而那违背了这东西唯一的承诺：帮不上忙的时候必须隐形。** 被告知"没有硬件渲染"的核心，好一点的回落到软件渲染，差一点的直接跑不起来——玩家装我们是为了画面好看，结果 DC 游戏打不开了。
+  >
+  > 转发之后什么都没损失：这类核心给 video_refresh 的是 `RETRO_HW_FRAME_BUFFER_VALID` 而不是像素，那一支本来就跳过。我们只是告诉 APP"这里没有 CPU 帧"。
+  >
+  > **另外这是"核心当前设置"的属性，不是"机种"的属性。** `swanstation`（PS1）和 `yabause`（SS）的核心选项里都有软件渲染器，选了就根本不会发这个 env，直连直接可用——那是玩家自己手里的开关，我们不用做任何东西。
 - **`RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER`(128)：返回 false 拒绝。** ← v1 没有这条。允许的话核心会直接往 RA 提供的缓冲里画，而那块内存可能是 **write-combined** 的——**从 WC 内存 memcpy 出来比普通内存慢一个量级**，会在 `retro_run` 里直接吃掉 1ms+。拒了它，核心用自己的 cached 缓冲，读回是快的。
 - `SET_GEOMETRY`(37)、`SET_ROTATION`(2)：运行时改分辨率/旋转，shim 记录并随帧头上报。
 - 其余 env 请求**一律原样转发，不要吞**。

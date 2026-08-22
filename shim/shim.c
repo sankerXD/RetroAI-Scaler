@@ -597,16 +597,33 @@ static bool shim_env_cb(unsigned cmd, void *data)
     } else if (cmd == RETRO_ENVIRONMENT_SET_ROTATION && data) {
         frame_link_set_rotation(*(const unsigned *)data);
     } else if (cmd == RETRO_ENVIRONMENT_SET_HW_RENDER) {
-        /* A core rendering on the GPU hands video_refresh a sentinel, not
-         * pixels, so there is nothing for us to take. Refusing is honest and
-         * makes the core fall back to software where it can; pretending to
-         * accept would leave us silently receiving no frames at all.
-         * RetroArch then keeps drawing normally and the app falls back to the
-         * MediaProjection path (§9). */
-        LOGI("core requests HW rendering - refusing, there are no CPU pixels "
-             "to take from such a core; the app must fall back to capture");
+        /*
+         * Forward it. Do NOT refuse.
+         *
+         * §4.2 said to return false here, and that was wrong - it was written
+         * assuming the shim is the one who has to answer. The shim can hand the
+         * question to RetroArch, which really does provide hardware rendering,
+         * and then the core behaves exactly as it would with no shim present.
+         *
+         * Refusing changes the core's behaviour, and that breaks the only
+         * promise this thing makes: when it cannot help, it must be invisible.
+         * A core told there is no hardware rendering might fall back to
+         * software, or might fail outright - and a player who installed us to
+         * get a nicer picture would find their Dreamcast games stopped working.
+         *
+         * What we lose is nothing we ever had: such a core hands video_refresh
+         * RETRO_HW_FRAME_BUFFER_VALID instead of pixels, which the frame
+         * callback already skips. We simply tell the app there will be no CPU
+         * frames, and it says so and stands down.
+         *
+         * Note this is a per-CORE-SETTING fact, not a per-console one:
+         * swanstation and yabause have software renderers in their core
+         * options, and with one of those selected they never send this at all
+         * and direct mode just works.
+         */
+        LOGI("core requests HW rendering - forwarding to RetroArch; there will "
+             "be no CPU pixels to take, so the app must use screen capture");
         frame_link_set_hw_render(true);
-        return false;
     }
 
     return g_env_cb ? g_env_cb(cmd, data) : false;
