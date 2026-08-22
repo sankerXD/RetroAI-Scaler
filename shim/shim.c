@@ -423,6 +423,39 @@ static void invalidate_stale_info_cache(const char *info_dir, const char *our_in
 static void install_info_file(const char *self_dir, const char *self_base,
                               const char *core_base);
 
+/* Cheap first, exact second: a different size settles it without reading, and
+ * a new build almost always is one. Equal sizes fall through to the bytes. */
+static bool differs_from(const char *a, const char *b)
+{
+    struct stat sa, sb;
+    if (stat(a, &sa) != 0 || stat(b, &sb) != 0) return true;
+    if (sa.st_size != sb.st_size) return true;
+
+    FILE *fa = fopen(a, "rb");
+    if (!fa) return true;
+    FILE *fb = fopen(b, "rb");
+    if (!fb) {
+        fclose(fa);
+        return true;
+    }
+
+    char   ba[8192], bb[8192];
+    size_t na, nb;
+    bool   diff = false;
+    do {
+        na = fread(ba, 1, sizeof(ba), fa);
+        nb = fread(bb, 1, sizeof(bb), fb);
+        if (na != nb || memcmp(ba, bb, na) != 0) {
+            diff = true;
+            break;
+        }
+    } while (na > 0);
+
+    fclose(fa);
+    fclose(fb);
+    return diff;
+}
+
 static bool copy_file(const char *src, const char *dst)
 {
     FILE *in = fopen(src, "rb");
@@ -507,7 +540,21 @@ static void replicate_for_listed_cores(const char *self_dir, const char *self_ba
             skipped++;
             continue;
         }
-        if (stat(target, &st) == 0) continue;   /* already there */
+        /*
+         * Replace a copy that is not this build.
+         *
+         * "Never overwrite" was there to make eating a real core impossible,
+         * and it also froze every replica at whatever version first created it.
+         * Measured: after two shim updates the hand-installed core was current
+         * while all 21 copies still ran the build from before the core name was
+         * reported at all - so every console except the one installed by hand
+         * went unidentified.
+         *
+         * Overwriting is safe on this path by construction: the name always
+         * ends in _shim_libretro_android.so, which no real core can be called.
+         * The guard that matters is kept - a real core is never a target.
+         */
+        if (stat(target, &st) == 0 && !differs_from(self_path, target)) continue;
 
         if (copy_file(self_path, target)) {
             LOGI("  installed %s", target);

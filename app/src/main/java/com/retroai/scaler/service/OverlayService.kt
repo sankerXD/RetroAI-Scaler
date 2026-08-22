@@ -363,7 +363,12 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                     }
                 }
 
-                applyConfigOnStart(manager)
+                // NOT applyConfigOnStart here. onCreate always runs before
+                // onStartCommand, so the frame source is not known yet, and
+                // this ran unconditionally - which is how direct mode still
+                // announced "configured FC, restart RetroArch", from a code
+                // path that had already been told not to run. The capture
+                // pipeline calls it once it knows it is the one starting.
             } catch (e: Exception) {
                 Log.e(TAG, "config backup failed", e)
             }
