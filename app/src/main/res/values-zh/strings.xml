@@ -61,6 +61,7 @@
     <string name="toast_restart_to_apply">重启 AI 增强后生效</string>
     <string name="toast_grant_overlay_first">请先授予悬浮窗权限</string>
     <string name="btn_cancel">取消</string>
+    <string name="btn_confirm">确认</string>
 
     <string name="menu_title">Retro AI 控制中心</string>
     <string name="menu_section_picture">画面</string>
@@ -196,9 +197,9 @@
     <string name="shim_guide_title">一次性设置</string>
     <string name="shim_guide_body">在 RetroArch 里：\n\n1. 加载核心 → 安装和还原核心\n2. 选这个文件：\n%1$s\n3. 再点一次【加载核心】，选中列表里带 (RetroAI) 的那一项\n\n然后回到这里，点【2 · 覆盖天马G配置】。\n\n万一有游戏打不开，点【撤销】。</string>
     <string name="reload_notice_title">需要重新加载游戏库</string>
-    <string name="reload_notice_body">已覆盖 %1$d 条启动项。\n\n现在回天马G 走一次：设置 → 重新加载。重启天马G 没用，它只在你让它扫描时才扫描。\n\n如果你用的是原版天马G（不是魔改版），请无视这一步——它每次启动都会自己重扫。</string>
+    <string name="reload_notice_body">回到天马G：设置 → 重新加载。\n\n如果你用的是原版天马G（非大光圈修改版），请无视。</string>
     <string name="shim_guide_ok">知道了</string>
-    <string name="shim_guide_body_restore">所有启动项都会改回原来的模拟器核心。两种状态下游戏都能正常玩，这一步只是从源头关掉增强。\n\n之后请在前端里重新加载一次游戏库。</string>
+    <string name="shim_guide_body_restore">所有启动项都会恢复。</string>
     <string name="shim_link_stop">断开连接</string>
     <string name="shim_link_dump">落盘下一帧</string>
     <string name="shim_link_idle">未运行。</string>

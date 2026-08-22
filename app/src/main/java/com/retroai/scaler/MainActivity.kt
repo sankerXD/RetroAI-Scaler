@@ -258,10 +258,10 @@ class MainActivity : AppCompatActivity() {
      * Shown when something actually changed, which after the first run is
      * never - so this is twice in the life of an install, not a nag.
      */
-    private fun showReloadNotice(changed: Int) {
+    private fun showReloadNotice() {
         AlertDialog.Builder(this)
             .setTitle(R.string.reload_notice_title)
-            .setMessage(getString(R.string.reload_notice_body, changed))
+            .setMessage(getString(R.string.reload_notice_body))
             .setPositiveButton(R.string.shim_guide_ok, null)
             .show()
     }
@@ -270,7 +270,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(R.string.shim_restore)
             .setMessage(getString(R.string.shim_guide_body_restore))
-            .setPositiveButton(R.string.shim_restore) { _, _ -> restoreLaunchFiles() }
+            .setPositiveButton(R.string.btn_confirm) { _, _ -> restoreLaunchFiles() }
             .setNegativeButton(R.string.btn_cancel, null)
             .show()
     }
@@ -611,7 +611,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 updateShimProbeUi()
                 if (isFinishing) return@runOnUiThread
-                if (result.changed > 0) showReloadNotice(result.changed)
+                if (result.changed > 0) showReloadNotice()
                 else Toast.makeText(
                     this, getString(R.string.toast_nothing_to_apply), Toast.LENGTH_LONG
                 ).show()
@@ -628,7 +628,7 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "launch restore: ${result.message}")
             runOnUiThread {
                 updateShimProbeUi()
-                if (!isFinishing) showReloadNotice(result.changed)
+                if (!isFinishing) showReloadNotice()
             }
         }.apply { name = "LaunchRestore"; isDaemon = true }.start()
     }

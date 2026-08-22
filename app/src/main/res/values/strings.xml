@@ -78,6 +78,7 @@
     <string name="toast_restart_to_apply">Restart AI enhancement to apply</string>
     <string name="toast_grant_overlay_first">Grant the overlay permission first</string>
     <string name="btn_cancel">Cancel</string>
+    <string name="btn_confirm">Confirm</string>
 
     <!-- Floating menu -->
     <string name="menu_title">Retro AI control</string>
@@ -238,9 +239,9 @@
     <string name="shim_guide_title">One-time setup</string>
     <string name="shim_guide_body">In RetroArch:\n\n1. Load Core → Install or Restore a Core\n2. Pick the file at:\n%1$s\n3. Load Core again and pick the entry marked (RetroAI)\n\nThen come back here and press “2 · Update the launcher”.\n\nIf a game ever fails to start, press “Undo”.</string>
     <string name="reload_notice_title">Reload your library</string>
-    <string name="reload_notice_body">Updated %1$d launch entries.\n\nNow go to your launcher and reload the library — in Pegasus that is Settings → Reload. Restarting it is not enough, it only rescans when told to.\n\nIf you are on the original Pegasus rather than a fork, ignore this: it rescans by itself at every start.</string>
+    <string name="reload_notice_body">Go back to Pegasus: Settings → Reload.\n\nIf you are running the original Pegasus rather than a modified build, ignore this.</string>
     <string name="shim_guide_ok">Got it</string>
-    <string name="shim_guide_body_restore">Every launch entry goes back to the emulator core it named before. Games keep working either way — this just turns the enhancement off at the source.\n\nReload the library in your frontend afterwards.</string>
+    <string name="shim_guide_body_restore">Every launch entry will be restored.</string>
     <string name="shim_link_stop">Disconnect</string>
     <string name="shim_link_dump">Dump next frame</string>
     <string name="shim_link_idle">Not running.</string>
