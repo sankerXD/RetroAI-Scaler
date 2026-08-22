@@ -69,6 +69,13 @@ class MainActivity : AppCompatActivity() {
     /** Filled in by syncLaunchFiles, read by the status line. */
     @Volatile private var shimCoreCount = 0
     @Volatile private var shimConvertedCount = 0
+
+    /**
+     * Whether any RetroArch override still carries our marker. Polled off the
+     * main thread because it walks a few hundred files on external storage, and
+     * kept here so the UI never does that walk itself.
+     */
+    @Volatile private var retroArchConfigIsOurs = false
     private var lastPreselectedCore: String? = null
     private lateinit var tvShimProbe: TextView
 
@@ -127,9 +134,31 @@ class MainActivity : AppCompatActivity() {
     private fun healLeftoverRetroArchConfig() {
         Thread {
             try {
+                /*
+                 * Never while a session is live.
+                 *
+                 * A running capture session has RetroArch's viewport written
+                 * ON PURPOSE - that is the session. Healing it here undoes the
+                 * thing that is currently working, and the player sees
+                 * "restored a leftover config" pop up for no reason they can
+                 * connect to anything, which is exactly what was reported after
+                 * switching to this app from a running PlayStation session. The
+                 * only reason it looked harmless is that RetroArch had already
+                 * read the override and does not read it again.
+                 *
+                 * Direct mode never writes those keys, so skipping costs
+                 * nothing there either; and a service that IS running has
+                 * already healed any leftovers at its own start.
+                 */
+                if (OverlayService.isRunning) {
+                    Log.i(TAG, "enhancement is running - not healing its own config")
+                    return@Thread
+                }
                 val manager = RetroArchConfigManager(applicationContext)
-                if (!manager.hasModifiedFiles()) return@Thread
+                retroArchConfigIsOurs = manager.hasModifiedFiles()
+                if (!retroArchConfigIsOurs) return@Thread
                 val result = manager.restoreFromLatestBackup()
+                retroArchConfigIsOurs = manager.hasModifiedFiles()
                 Log.i(TAG, "healed leftover RetroArch config: ${result.message}")
                 runOnUiThread {
                     // A failure gets said out loud too. This heal running,
@@ -401,7 +430,19 @@ class MainActivity : AppCompatActivity() {
 
         val converted = shimConvertedCount
         val total = shimCoreCount
-        btnShimDump.isEnabled = converted > 0
+        /*
+         * Undo is also the only way back for RetroArch's own config, so it must
+         * not go dead while there is still something to undo.
+         *
+         * It used to be enabled purely on "some launch entry points at the
+         * shim". Undo those once and the button greys out - and if a capture
+         * session had left a viewport override behind, the last control that
+         * could take it off was now unpressable, on a screen that no longer has
+         * a "restore RetroArch config" button at all. We can fix that from a
+         * shell; a player would reinstall everything and still have RetroArch
+         * drawing into a corner.
+         */
+        btnShimDump.isEnabled = converted > 0 || retroArchConfigIsOurs
         tvShimProbe.text = when {
             total == 0 -> getString(R.string.shim_link_idle)
             converted == 0 -> getString(R.string.shim_status_none)
@@ -781,6 +822,12 @@ class MainActivity : AppCompatActivity() {
                 manager.writeCoresList(scan.cores)
                 shimCoreCount = scan.cores.size
                 shimConvertedCount = scan.converted.size
+                // Same walk the heal does, and it has to happen even when the
+                // heal took its early exit (a live session), or Undo would be
+                // greyed out for the whole of that session.
+                retroArchConfigIsOurs = runCatching {
+                    RetroArchConfigManager(applicationContext).hasModifiedFiles()
+                }.getOrDefault(false)
                 Log.i(TAG, "scan: ${scan.cores.size} cores, ${scan.converted.size} converted")
                 runOnUiThread {
                     updateShimProbeUi()
@@ -851,6 +898,7 @@ class MainActivity : AppCompatActivity() {
                 RetroArchBackupManager.Result(false, it.message ?: "failed")
             }
             configResult?.let { Log.i(TAG, "config restore on undo: ${it.message}") }
+            retroArchConfigIsOurs = runCatching { config.hasModifiedFiles() }.getOrDefault(false)
 
             runOnUiThread {
                 updateShimProbeUi()

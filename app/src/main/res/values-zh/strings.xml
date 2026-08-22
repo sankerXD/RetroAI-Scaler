@@ -171,6 +171,7 @@
     <string name="backup_note_reason">原因: %1$s</string>
     <string name="backup_note_source">来源: %1$s</string>
     <string name="backup_note_files">文件: %1$d 个 (%2$d KB)，跳过 %3$d 个大文件/BIOS</string>
+    <string name="backup_note_manual_restore">手动还原（不需要本 APP）：把本文件旁边的 config/ 整个拷回\n%1$s\n覆盖即可。RA 下次载入游戏时就会读到。</string>
     <string name="backup_note_main_config">注意: RetroArch 主配置 retroarch.cfg 位于\nAndroid/data/com.retroarch.aarch64/files/ 下，安卓 11 起\n第三方应用无法访问，因此不在此备份内。\n本工具也从不修改主配置，只写核心覆盖配置。</string>
 
     <string name="capture_no_frame">没有取到画面（游戏未在前台？）</string>
@@ -186,6 +187,7 @@
     <string name="capture_auto_start">开始自动采集</string>
 
     <string name="toast_shim_hw_core">该平台无法直接渲染。请关闭 RetroArch，回到本 APP 启动录屏模式。</string>
+    <string name="toast_shim_hw_core_unsupported">该平台无法直接渲染，AI 增强已停止。</string>
     <string name="toast_shim_no_frames">没有收到模拟器传来的画面。请确认已在 RetroArch 里装好配套核心，并且是用它启动的游戏。</string>
     <string name="shim_setup_title">初始化设置</string>
     <string name="shim_setup_guide">1 · 设置核心</string>

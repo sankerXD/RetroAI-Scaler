@@ -36,6 +36,8 @@ import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
 import com.retroai.scaler.ui.CaptureMode
+import com.retroai.scaler.ui.ConsoleType
+import com.retroai.scaler.ui.RenderProfile
 import com.retroai.scaler.ui.LocaleHelper
 import com.retroai.scaler.ui.ProfilePreference
 import com.retroai.scaler.ui.consoleForCore
@@ -248,20 +250,60 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                  * the app, which is the clean state that machinery was built
                  * for - app in front, no game running, nothing to race.
                  */
-                Log.w(TAG, "core renders on the GPU - no frames; stopping")
-                // With the core's name: the capture route configures RetroArch
-                // for whatever console THIS core is, and by the time the player
-                // presses the button the static holding it may be gone.
-                HardwareCoreNotice.remember(ShimFrameService.coreFile)
+                /*
+                 * Offer screen recording only where it would actually work.
+                 *
+                 * A GPU core means direct mode is out; it does NOT mean capture
+                 * is in. Capture has to park RetroArch in a corner at native
+                 * size and fit the enhanced picture in what is left (§1), and
+                 * for a whole class of platforms there is no such room: a
+                 * Dreamcast is 640x480 native, a PSP 480x272, a GameCube, Wii,
+                 * Wii U, DS or 3DS bigger or double-screened. On a 1280x960
+                 * panel a Dreamcast's largest free band is 1280x464 - eight
+                 * pixels short of even a 1:1 output.
+                 *
+                 * Consoles we cannot name land here too, and take the same
+                 * path. "I do not recognise this core" is a fact about us; the
+                 * player only needs to know that this platform is not one this
+                 * app can help with, and that nothing is left running.
+                 *
+                 * Offering the card anyway is worse than not offering it: the
+                 * player grants screen recording, closes RetroArch, launches
+                 * the game again, and gets a refusal at the end of all that.
+                 */
+                val core = ShimFrameService.coreFile
+                val console = core?.let { consoleForCore(it) }
+                val servable = captureCouldServe(console)
+                Log.w(
+                    TAG,
+                    "core renders on the GPU (core=$core console=$console " +
+                        "servable=$servable) - no frames; stopping"
+                )
+                if (servable) {
+                    // With the core's name: the capture route configures
+                    // RetroArch for whatever console THIS core is, and by the
+                    // time the player presses the button the static holding it
+                    // may be gone.
+                    HardwareCoreNotice.remember(core)
+                } else {
+                    HardwareCoreNotice.forget()
+                }
                 // On the source's own thread, while it still exists: after
                 // stopSelf there is nowhere left to run it and the last frame
                 // stays on the glass (AGENT.md §10.3b).
                 frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() }
                 Toast.makeText(
                     this@OverlayService,
-                    getString(R.string.toast_shim_hw_core),
+                    getString(
+                        if (servable) R.string.toast_shim_hw_core
+                        else R.string.toast_shim_hw_core_unsupported
+                    ),
                     Toast.LENGTH_LONG
                 ).show()
+                // "The AI engine has stopped" has to be true of everything,
+                // not just this service: the link service's own notification
+                // would otherwise sit there saying it is waiting.
+                stopService(Intent(this@OverlayService, ShimFrameService::class.java))
                 stopSelf()
                 return
             }
@@ -530,6 +572,31 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    /**
+     * Whether the capture route could produce anything worth showing for this
+     * console on this screen.
+     *
+     * The bar is a whole multiple of 2 or more: an enhanced picture the same
+     * size as the raw one, sitting next to the raw one, is not a reduced
+     * result. Below that there is nothing to offer and saying so early is the
+     * whole point - see the watchdog.
+     *
+     * A throwaway profile rather than the stored one, because the question is
+     * about a console the player has not selected and may never select. The
+     * fields that matter here (native size, source scale, corner, margin) are
+     * the defaults for every console anyway; the capture mode is not, and it
+     * decides whether the output has to stay clear of the capture window at
+     * all, so that one is read.
+     */
+    private fun captureCouldServe(console: ConsoleType?): Boolean {
+        if (console == null) return false
+        val probe = RenderProfile(
+            console = console,
+            captureMode = ProfilePreference.lastCaptureMode(this)
+        )
+        return probe.getOutputScale(screenWidth, screenHeight) >= 2
     }
 
     /**

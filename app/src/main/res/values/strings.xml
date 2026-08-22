@@ -207,6 +207,7 @@
     <string name="backup_note_reason">Reason: %1$s</string>
     <string name="backup_note_source">Source: %1$s</string>
     <string name="backup_note_files">Files: %1$d (%2$d KB), skipped %3$d large files/BIOS</string>
+    <string name="backup_note_manual_restore">To restore by hand, with or without this app: copy the config/ folder next to this file over\n%1$s\nRetroArch reads it again the next time it loads content.</string>
     <string name="backup_note_main_config">Note: RetroArch\'s main retroarch.cfg lives under\nAndroid/data/com.retroarch.aarch64/files/, which no third-party\napp can reach since Android 11, so it is not in this backup.\nThis tool never modifies it either - only core overrides.</string>
 
     <!-- Corpus capture (developer tooling, no menu entry) -->
@@ -228,6 +229,7 @@
       transcript itself is deliberately untranslated: it is a diagnostic log.
     -->
     <string name="toast_shim_hw_core">This console cannot be enhanced directly. Close RetroArch, then start screen recording mode from the app.</string>
+    <string name="toast_shim_hw_core_unsupported">This platform cannot be rendered directly. AI enhancement has stopped.</string>
     <string name="toast_shim_no_frames">No picture arrived from the emulator. Check that the companion core is installed in RetroArch and that the game was started with it.</string>
     <string name="shim_setup_title">First-time setup</string>
     <string name="shim_setup_guide">1 · Install the core</string>

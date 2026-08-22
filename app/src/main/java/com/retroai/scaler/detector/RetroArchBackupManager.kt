@@ -117,7 +117,10 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
         }
     }
 
-    fun createSnapshot(reason: String = context.getString(R.string.backup_reason_manual)): Result {
+    fun createSnapshot(reason: String = context.getString(R.string.backup_reason_manual)): Result =
+        synchronized(RetroArchConfigManager.CONFIG_LOCK) { createSnapshotLocked(reason) }
+
+    private fun createSnapshotLocked(reason: String): Result {
         if (!configRoot.isDirectory) {
             return Result(false, context.getString(R.string.cfg_no_config_dir))
         }
@@ -181,6 +184,14 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
                     appendLine(context.getString(R.string.backup_note_reason, reason))
                     appendLine(context.getString(R.string.backup_note_source, configRoot.absolutePath))
                     appendLine(context.getString(R.string.backup_note_files, copied, bytes / 1024, skipped))
+                    appendLine()
+                    // Spelled out because the app is not guaranteed to be the
+                    // thing doing the restoring. If someone ends up here at all
+                    // it is because something went wrong, and "reinstall
+                    // everything" is the answer they would otherwise reach for
+                    // - which does not put this back either.
+                    appendLine(context.getString(
+                        R.string.backup_note_manual_restore, configRoot.absolutePath))
                     appendLine()
                     appendLine(context.getString(R.string.backup_note_main_config))
                 }
@@ -271,7 +282,10 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
      * Snapshots are never deleted here. A restore must not reduce the safety
      * net.
      */
-    fun restoreFromLatest(markers: List<String>): Result {
+    fun restoreFromLatest(markers: List<String>): Result =
+        synchronized(RetroArchConfigManager.CONFIG_LOCK) { restoreFromLatestLocked(markers) }
+
+    private fun restoreFromLatestLocked(markers: List<String>): Result {
         val snapshot = latestSnapshot()
         val snapConfig = snapshot?.let { File(it, "config") }?.takeIf { it.isDirectory }
 

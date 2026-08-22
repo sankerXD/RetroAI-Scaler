@@ -42,6 +42,25 @@ class RetroArchConfigManager(private val context: Context) {
         /** Every marker this tool has ever written. */
         val MARKERS = RetroArchOverridePatch.MARKERS
 
+        /**
+         * One writer at a time across the whole app.
+         *
+         * Three components reach these files - the service on start and stop,
+         * the activity's heal on open, the Undo button - and they are not
+         * ordered by anything. Two restores running at once is not
+         * hypothetical: the service's stop-restore runs on its own thread while
+         * onDestroy carries on, and opening the app at that moment starts
+         * another. They would then write the SAME `.cfg.rascaler-tmp` sibling
+         * from two threads and rename it twice, which is how a config file ends
+         * up half of each - the one outcome the temp-file dance exists to
+         * prevent.
+         *
+         * A JVM lock is enough because every one of those callers is in this
+         * process. RetroArch is not a writer here; it reads overrides at
+         * content load.
+         */
+        internal val CONFIG_LOCK = Any()
+
         private val CONFIG_ROOT_CANDIDATES = listOf(
             "/storage/emulated/0/RetroArch/config",
             "/storage/emulated/0/RetroArch64/config",
@@ -197,6 +216,7 @@ class RetroArchConfigManager(private val context: Context) {
 
         var patched = 0
         val failures = mutableListOf<String>()
+        synchronized(CONFIG_LOCK) {
         for (folder in folders) {
             val cfgFiles = folder.listFiles { f ->
                 f.isFile && f.name.endsWith(".cfg", ignoreCase = true)
@@ -204,6 +224,7 @@ class RetroArchConfigManager(private val context: Context) {
             for (cfg in cfgFiles) {
                 if (patchFile(cfg, values)) patched++ else failures.add(cfg.name)
             }
+        }
         }
 
         return when {
