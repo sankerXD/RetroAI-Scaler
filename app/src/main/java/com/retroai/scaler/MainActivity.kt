@@ -23,6 +23,7 @@ import com.retroai.scaler.ui.ConsoleType
 import com.retroai.scaler.ui.LocaleHelper
 import com.retroai.scaler.ui.ProfilePreference
 import com.retroai.scaler.service.OverlayService
+import com.retroai.scaler.shim.ShimProbeService
 
 class MainActivity : AppCompatActivity() {
 
@@ -42,6 +43,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPickConsole: Button
     private lateinit var btnPickTargetApp: Button
     private lateinit var btnPickLanguage: Button
+
+    // TEMPORARY - gate 1 of the libretro shim route.
+    private lateinit var btnShimProbe: Button
+    private lateinit var tvShimProbe: TextView
 
     private val foregroundMonitor by lazy { ForegroundAppMonitor(this) }
 
@@ -173,6 +178,16 @@ class MainActivity : AppCompatActivity() {
                 requestStartPipeline()
             }
         }
+
+        // TEMPORARY - gate 1 of the libretro shim route. Remove with
+        // ShimProbeService.kt and its card in activity_main.xml.
+        btnShimProbe = findViewById(R.id.btnShimProbe)
+        tvShimProbe = findViewById(R.id.tvShimProbe)
+        btnShimProbe.setOnClickListener {
+            val intent = Intent(this, ShimProbeService::class.java)
+            if (ShimProbeService.isRunning) stopService(intent)
+            else ContextCompat.startForegroundService(this, intent)
+        }
     }
 
     /** The service can stop itself while this Activity stays resumed (floating
@@ -180,7 +195,26 @@ class MainActivity : AppCompatActivity() {
     private val stateRefreshRunnable = object : Runnable {
         override fun run() {
             updateServiceStateUi()
+            updateShimProbeUi()
             btnToggleService.postDelayed(this, 1000)
+        }
+    }
+
+    /** TEMPORARY - gate 1. The probe's transcript is written from its own
+     *  threads, so the only way this Activity learns about it is to look. */
+    private fun updateShimProbeUi() {
+        btnShimProbe.setText(
+            if (ShimProbeService.isRunning) R.string.shim_probe_stop
+            else R.string.shim_probe_start
+        )
+        val lines = ShimProbeService.transcript
+        tvShimProbe.text = if (lines.isEmpty()) {
+            getString(R.string.shim_probe_idle)
+        } else {
+            val accepted = ShimProbeService.acceptedCount.get()
+            val verdict = if (accepted > 0) "VERDICT: loopback works, accepted=$accepted"
+            else "VERDICT: pending - no connection yet"
+            (lines.takeLast(24) + verdict).joinToString("\n")
         }
     }
 

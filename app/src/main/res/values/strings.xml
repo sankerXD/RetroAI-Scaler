@@ -212,4 +212,15 @@
     <string name="capture_button_count">Grab a native frame  %1$d saved</string>
     <string name="capture_auto_stop">Stop auto capture  %1$d saved\n%2$s</string>
     <string name="capture_auto_start">Start auto capture</string>
+
+    <!--
+      TEMPORARY - gate 1 of the libretro shim route (NewSolution.md §7).
+      Delete along with ShimProbeService.kt once the gate is answered. The
+      transcript itself is deliberately untranslated: it is a diagnostic log.
+    -->
+    <string name="shim_probe_title">Gate 1 · IPC probe (temporary)</string>
+    <string name="shim_probe_hint">Starts a loopback listener on 127.0.0.1:55435, then have RetroArch connect to it: Netplay → Connect to Netplay Host → 127.0.0.1. One accepted connection answers the gate.</string>
+    <string name="shim_probe_start">Start probe</string>
+    <string name="shim_probe_stop">Stop probe</string>
+    <string name="shim_probe_idle">Not running.</string>
 </resources>
