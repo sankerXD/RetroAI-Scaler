@@ -460,6 +460,12 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         isRenderingActive = shouldRender
         Log.i(TAG, if (shouldRender) "Target app in foreground - resuming." else "Target app left - pausing.")
+
+        // Capture that was granted while this app was in front waits here for
+        // the emulator to come back. See startCapturePipeline.
+        if (shouldRender && captureBridge == null && mediaProjection != null) {
+            startCapturePipeline()
+        }
         applyRenderingState()
         updateNotification()
 
