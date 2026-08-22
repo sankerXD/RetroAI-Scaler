@@ -183,7 +183,7 @@
     <string name="capture_auto_stop">停止自动采集　%1$d 张\n%2$s</string>
     <string name="capture_auto_start">开始自动采集</string>
 
-    <string name="toast_shim_hw_core">该平台无法直接渲染，请回 APP 启动录屏模式。</string>
+    <string name="toast_shim_hw_core">该平台无法直接渲染。请关闭 RetroArch，回到本 APP 启动录屏模式。</string>
     <string name="toast_shim_no_frames">没有收到模拟器传来的画面。请确认已在 RetroArch 里装好配套核心，并且是用它启动的游戏。</string>
     <string name="shim_setup_title">初始化设置</string>
     <string name="shim_setup_guide">1 · 设置核心</string>

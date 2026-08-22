@@ -31,6 +31,7 @@ import com.retroai.scaler.capture.CaptureBridge
 import com.retroai.scaler.capture.FrameSource
 import com.retroai.scaler.shim.ShimFrameService
 import com.retroai.scaler.shim.ShimFrameSource
+import com.retroai.scaler.detector.CaptureModePreference
 import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
@@ -229,13 +230,35 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                  * activity-start restrictions. So the only part that genuinely
                  * cannot be automatic is the tap on the system dialog.
                  */
-                Log.w(TAG, "core renders on the GPU - switching to screen capture")
-                shimMode = false   // once only; the activity takes it from here
-                startActivity(
-                    Intent(this@OverlayService, MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        .putExtra(MainActivity.EXTRA_REQUEST_CAPTURE, true)
-                )
+                /*
+                 * Say so and stop. Do not try to switch modes here.
+                 *
+                 * Pulling this app to the front mid-game to ask for capture
+                 * consent was tried and abandoned. Every failure lived in that
+                 * transition: capture starting while this app is what is on
+                 * screen, the console preference not reaching the running
+                 * service, the last frame frozen because the thread that could
+                 * clear it had already been torn down. And the convenience it
+                 * bought was small - RetroArch has to be closed and the game
+                 * restarted either way, because it reads the new viewport only
+                 * when it loads content.
+                 *
+                 * So: the player closes RetroArch and starts capture mode from
+                 * the app, which is the clean state that machinery was built
+                 * for - app in front, no game running, nothing to race.
+                 */
+                Log.w(TAG, "core renders on the GPU - no frames; stopping")
+                CaptureModePreference.rememberHardwareCore(this@OverlayService)
+                // On the source's own thread, while it still exists: after
+                // stopSelf there is nowhere left to run it and the last frame
+                // stays on the glass (AGENT.md §10.3b).
+                frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() }
+                Toast.makeText(
+                    this@OverlayService,
+                    getString(R.string.toast_shim_hw_core),
+                    Toast.LENGTH_LONG
+                ).show()
+                stopSelf()
                 return
             }
 
@@ -1046,6 +1069,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 // profile, the renderer config, the geometry - belongs to the
                 // main thread.
                 mainHandler.post {
+                    CaptureModePreference.forgetHardwareCore(this)
                     val adopted = floatingBallManager
                         ?.adoptNativeSize(w, h, ShimFrameService.coreFile)
                     if (adopted == true) pushGeometry()

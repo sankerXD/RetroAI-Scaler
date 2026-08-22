@@ -19,6 +19,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.retroai.scaler.detector.ForegroundAppMonitor
+import com.retroai.scaler.detector.CaptureModePreference
 import com.retroai.scaler.detector.PegasusConfigManager
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
@@ -35,12 +36,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
 
-        /**
-         * Brought to the front by the service because the core it just met
-         * renders on the GPU. Only the tap on the system consent dialog is
-         * left for the player.
-         */
-        const val EXTRA_REQUEST_CAPTURE = "extra_request_capture"
     }
 
     private lateinit var tvStatusText: TextView
@@ -63,7 +58,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnShimStart: Button
 
     private lateinit var btnShimCapture: Button
-    private lateinit var cardConsole: View
     private lateinit var cardPermissions: View
     private lateinit var cardSetup: View
 
@@ -106,7 +100,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         initViews()
-        handleCaptureRequest(intent)
         checkHardwareCapabilities()
         updatePermissionButtons()
         healLeftoverRetroArchConfig()
@@ -211,8 +204,10 @@ class MainActivity : AppCompatActivity() {
         // frames. It comes back when screen capture is on the table, because
         // that route computes RetroArch's viewport from the declared console
         // and cannot work without one - see updateShimProbeUi.
-        cardConsole = findViewById(R.id.cardConsole)
-        cardConsole.visibility = View.GONE
+        // Never shown. The console is worked out from the core name, for the
+        // capture route as well - see preselectConsoleFromCore - so a picker
+        // would only be one more thing on screen that nobody needs to touch.
+        findViewById<View>(R.id.cardConsole).visibility = View.GONE
         cardPermissions = findViewById(R.id.cardPermissions)
         cardSetup = findViewById(R.id.cardSetup)
 
@@ -362,9 +357,10 @@ class MainActivity : AppCompatActivity() {
          * symptom was a PlayStation drawn to the previous console's dimensions,
          * with the capture window landing in the middle of the picture.
          */
-        val needsCapture = ShimFrameService.hardwareRenderedCore
+        // Remembered rather than live: the service that saw the GPU core has
+        // stopped by the time anyone gets here to press this.
+        val needsCapture = CaptureModePreference.sawHardwareCore(this)
         btnShimCapture.visibility = if (needsCapture) View.VISIBLE else View.GONE
-        cardConsole.visibility = if (needsCapture) View.VISIBLE else View.GONE
         if (needsCapture) preselectConsoleFromCore()
 
         /*
@@ -609,26 +605,6 @@ class MainActivity : AppCompatActivity() {
      * but as an exception offered when it is needed, not as a choice to be
      * understood up front.
      */
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        // singleTask, so a second launch arrives here rather than in onCreate.
-        handleCaptureRequest(intent)
-    }
-
-    private fun handleCaptureRequest(intent: Intent?) {
-        if (intent?.getBooleanExtra(EXTRA_REQUEST_CAPTURE, false) != true) return
-        intent.removeExtra(EXTRA_REQUEST_CAPTURE)
-        preselectConsoleFromCore()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.capture_needed_title)
-            .setMessage(R.string.capture_needed_body)
-            .setPositiveButton(R.string.shim_guide_start) { _, _ -> requestStartCapturePipeline() }
-            .setNegativeButton(R.string.btn_cancel) { _, _ -> stopOverlayService() }
-            .setCancelable(false)
-            .show()
-    }
-
     private fun requestStartPipeline() {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, R.string.toast_grant_overlay_first, Toast.LENGTH_SHORT).show()
@@ -656,6 +632,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.toast_grant_overlay_first, Toast.LENGTH_SHORT).show()
             return
         }
+        preselectConsoleFromCore()
         if (ShimFrameService.isRunning) {
             stopService(Intent(this, ShimFrameService::class.java))
         }
