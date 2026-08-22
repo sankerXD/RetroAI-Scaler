@@ -112,6 +112,8 @@ static unsigned long g_frames;
  * no line means nobody asked, and the fault is upstream of this file.
  * Deliberately bounded, so it cannot become per-frame noise. */
 static unsigned g_serialize_queries;
+static unsigned g_serialize_calls;
+static unsigned g_unserialize_calls;
 static bool     g_logged_sysinfo;
 static bool     g_logged_memsize[2];
 
@@ -764,14 +766,23 @@ RETRO_API size_t retro_serialize_size(void)
 RETRO_API bool retro_serialize(void *data, size_t size)
 {
     bool ok = ensure() ? g_core.serialize(data, size) : false;
-    LOGI("serialize(size=%zu) -> %d", size, (int)ok);
+    /* Bounded, because save states are not always user-initiated: with rewind
+     * enabled RetroArch serializes EVERY frame, and an unbounded log line here
+     * would be 60Hz of logcat traffic inside the frame path. */
+    if (g_serialize_calls < 3) {
+        g_serialize_calls++;
+        LOGI("serialize(size=%zu) -> %d", size, (int)ok);
+    }
     return ok;
 }
 
 RETRO_API bool retro_unserialize(const void *data, size_t size)
 {
     bool ok = ensure() ? g_core.unserialize(data, size) : false;
-    LOGI("unserialize(size=%zu) -> %d", size, (int)ok);
+    if (g_unserialize_calls < 3) {
+        g_unserialize_calls++;
+        LOGI("unserialize(size=%zu) -> %d", size, (int)ok);
+    }
     return ok;
 }
 
