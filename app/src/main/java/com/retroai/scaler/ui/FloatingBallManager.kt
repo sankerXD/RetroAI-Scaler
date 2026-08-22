@@ -240,6 +240,22 @@ class FloatingBallManager(
         if (matched != null && matched != profile.console) {
             ProfilePreference.setConsole(context, matched)
             profile = ProfilePreference.load(context)
+            /*
+             * The menu has to be told, or it keeps showing the previous
+             * console's answers.
+             *
+             * Settings are saved per console, so switching game legitimately
+             * loads different ones - but nothing was refreshing the controls,
+             * so the chips went on displaying whatever was last selected while
+             * the renderer used the values just loaded. Someone reads 5x off
+             * the menu on three consoles in a row and gets 4x, 3x and 6x, with
+             * the menu and the picture disagreeing and no way to tell which is
+             * lying.
+             */
+            menuView?.let {
+                syncMenuToProfile(it)
+                syncEngineChipToProfile()
+            }
         }
 
         // The scale is NOT set from the geometry. It follows the console, which
