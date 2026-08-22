@@ -403,10 +403,13 @@ GPU 渲染核心（`flycast`、硬件渲染的 `swanstation` / `yabasanshiro`）
    - 最可能：`captureMode` 是存在偏好里的陈旧值，而模式探测（§11.2）在这条新路径上没跑或跑晚了。切进录屏模式时我清了 `detectedSourceRect`，**没清 `captureMode`**。
    - §11.4 记着这两种判错的代价不对称：**单应用判成整屏只是中间多个洞，整屏判成单应用会立刻自激**——所以这条要优先修对，不能只靠预测。
 
-**读代码时先看这两条（2026-08-22 查还原 BUG 时发现，都还没修）：**
+**症状 2 的真因（2026-08-22 修）：`applyConfigOnStart` 一个调用点都没有。** commit `2605148` 把 `onCreate` 里那次调用删了，提交信息写着"移到捕获管线里去调"——**那一步没做**。于是**捕获路线从头到尾不写 RA 视口**，RA 全屏画着，而我们照常去采样右下角那块 320×240 —— 实测截图里屏幕中央那个 640×480 的框，正是 `getOutputRect` 在 corner 布局下算出来的（left=320 top=112），里面装的是 PS1 标题画面右下角那行版权字放大 2 倍。**几何和捕获模式都没问题，只是从来没人叫模拟器挪窝**。§9.2 原本猜的"捕获模式被判成 SINGLE_APP"是错的，安卓 11 上 `defaultCaptureMode` 本来就是 WHOLE_SCREEN。
 
-3. **`applyConfigOnStart` 现在是死代码，没有任何调用点。** commit `2605148` 把 `onCreate` 里那次调用删了，提交信息写的是"移到捕获管线里去调"——**那一步没做**。后果：**捕获路线启动时根本不写 RA 视口**，RA 就全屏画着，正是症状 2 里"RA 的原始画面全屏在底下"。现在唯一还在写配置的是 `rewriteRetroArchConfigForCaptureMode()`（模式探测结果与预测不符时才跑），修 §9.2 的第一件事就是把它接回 `startCapturePipeline()` 的捕获分支——那里才第一次知道自己是哪条帧源。
-4. **写配置用的是 `profile.console`，跟真正在跑的核心没有任何联系。** 预选（`preselectConsoleFromCore`）一旦没生效（`ShimFrameService.coreFile` 为空、`consoleForCore` 认不出、或服务握的 profile 没重载），**视口就写进上一个机种的目录里**：玩 PS1 却把 240×160 + 右下角写进 mGBA 的 override。PS1 那边看不出来（PS1 目录没被写，RA 全屏），几天后进 GBA 才发现画面缩在右下角。写之前应当拿 `ShimFrameService.coreFile` 对一次账，对不上就**不写**，而不是写到猜出来的那个目录里去。
+修法：`onStartCommand` 的捕获分支里调它——**那里才第一次知道自己是哪条帧源**（§17.8 第 2 条）。而且必须在**弹"请再次启动游戏"之前**写完：RA 只在载入内容时读 override，那次重启是这一笔唯一的生效机会。
+
+**配置写哪个机种，只认正在跑的核心。** 以前用 `profile.console`（上次玩的那个），于是玩 PS1 把 240×160 + 右下角写进了 mGBA 的 override —— 当场看不出来（PS1 目录没写，RA 全屏），几天后进 GBA 才发现画面缩在右下角，而那时已经跟"录屏模式"完全对不上了。现在：核心名取自 `ShimFrameService.coreFile`，取不到就取 `CaptureModePreference.hardwareCoreFile()`（**核心名跟那个布尔标志一起持久化**，因为按钮可能在进程死掉很久以后才被按）；`consoleForCore` 认不出就**什么都不写并提示**。写进猜出来的目录，比不写严重得多。
+
+> 一个还在的粗糙处：`coreFoldersFor(console)` 会写该机种**所有**核心目录（PS1 就是 Beetle PSX / Beetle PSX HW / PCSX-ReARMed / SwanStation 四个，每个目录下每一个 .cfg）。这是 §2 那条"核心→内容目录→单游戏"决定的，现在每个文件都带自描述记录、可精确还原，所以代价可控。真要收窄，需要一张"核心文件名 → RA 覆盖目录名"的表。
 
 > **这条路线的复杂度不在录屏本身，在那个转场。** 中途把 APP 拉到前台自动请求授权已经试过并撤回（见第 17.8 节和 git 历史），每修一层露出下一层。现在是"只提示、玩家自己回来点"，那时 APP 在前台、没有游戏在跑、状态干净——**那正是这套老机器当初被设计的工作条件**，修的时候别再把它挪回转场里。
 

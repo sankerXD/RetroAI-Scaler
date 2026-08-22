@@ -38,6 +38,7 @@ import com.retroai.scaler.detector.TargetAppPreference
 import com.retroai.scaler.ui.CaptureMode
 import com.retroai.scaler.ui.LocaleHelper
 import com.retroai.scaler.ui.ProfilePreference
+import com.retroai.scaler.ui.consoleForCore
 import com.retroai.scaler.jni.NativeBridge
 import com.retroai.scaler.ui.FloatingBallManager
 
@@ -248,7 +249,13 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                  * for - app in front, no game running, nothing to race.
                  */
                 Log.w(TAG, "core renders on the GPU - no frames; stopping")
-                CaptureModePreference.rememberHardwareCore(this@OverlayService)
+                // With the core's name: the capture route configures RetroArch
+                // for whatever console THIS core is, and by the time the player
+                // presses the button the static holding it may be gone.
+                CaptureModePreference.rememberHardwareCore(
+                    this@OverlayService,
+                    ShimFrameService.coreFile
+                )
                 // On the source's own thread, while it still exists: after
                 // stopSelf there is nowhere left to run it and the last frame
                 // stays on the glass (AGENT.md §10.3b).
@@ -367,8 +374,24 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * the newest is older than 15 days. Runs off the main thread: it walks a
      * few hundred files on external storage.
      */
+    /**
+     * Everything that touches RetroArch's config files, in order, on one
+     * thread.
+     *
+     * Order is the point. The snapshot has to be taken before a patch is
+     * written, or the snapshot records our own viewport as the user's original.
+     * These used to be two threads started from two lifecycle callbacks
+     * (onCreate and onStartCommand) with nothing sequencing them.
+     *
+     * Not the restore: that has to outlive the service, so it keeps its own
+     * non-daemon thread.
+     */
+    private val configExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "RAConfig").apply { isDaemon = true }
+    }
+
     private fun ensureConfigBackup() {
-        Thread {
+        configExecutor.execute {
             try {
                 val manager = RetroArchConfigManager(this)
 
@@ -400,21 +423,30 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 // onStartCommand, so the frame source is not known yet, and
                 // this ran unconditionally - which is how direct mode still
                 // announced "configured FC, restart RetroArch", from a code
-                // path that had already been told not to run. The capture
-                // pipeline calls it once it knows it is the one starting.
+                // path that had already been told not to run. onStartCommand
+                // queues it behind this one once it knows it is capture that is
+                // starting.
             } catch (e: Exception) {
                 Log.e(TAG, "config backup failed", e)
             }
-        }.apply { name = "ConfigBackup"; isDaemon = true }.start()
+        }
     }
 
     /**
-     * Configures RetroArch the moment the enhancer starts, so the very first
-     * run works: without this the user has to start the app, open the menu,
-     * press 自动写入, then restart RetroArch before anything lines up.
+     * Shrinks RetroArch into its corner, the moment capture starts.
      *
-     * Uses the persisted platform choice - the floating menu may never have
-     * been opened in this session.
+     * This has to happen HERE and not one step later, because RetroArch reads
+     * its overrides only when it loads content: the player is about to be told
+     * to close it and launch the game again, and that launch is the one chance
+     * this write has to take effect.
+     *
+     * It had no call site at all between 2605148 and this commit. The symptom
+     * was the whole capture route quietly not working: RetroArch drew full
+     * screen, and the enhancer magnified whatever happened to be in the
+     * bottom-right 320x240 of it - on the test device, the copyright line of a
+     * PlayStation title screen, blown up 2x in a box in the middle of the
+     * picture. Nothing was wrong with the geometry or the capture mode; the
+     * emulator had simply never been asked to move.
      */
     private fun applyConfigOnStart(manager: RetroArchConfigManager) {
         /*
@@ -433,14 +465,51 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             Log.i(TAG, "shim mode - leaving RetroArch's config untouched")
             return
         }
-        val profile = ProfilePreference.load(this)
-        val folders = manager.coreFoldersFor(profile.console)
-        if (folders.isEmpty()) {
-            Log.w(TAG, "no core config folder for ${profile.console.name}, skipping auto-write")
+
+        /*
+         * The console comes from the core that is actually running. Nothing
+         * else is allowed to decide it.
+         *
+         * The stored "current console" is a leftover from whatever was played
+         * last, and using it is not a smaller mistake than not writing at all:
+         * it writes a PlayStation viewport into the Game Boy Advance override,
+         * where it does nothing for the session that wrote it and then squeezes
+         * a GBA into a corner days later, on a platform the player never
+         * connected to screen recording. That happened, and it took a restore
+         * bug hunt to find.
+         *
+         * So: no core, or a core that maps to no console -> write NOTHING and
+         * say so. A capture session that does not line up is a bad session; a
+         * viewport written into the wrong console's config is damage that
+         * outlives it.
+         */
+        val core = ShimFrameService.coreFile ?: CaptureModePreference.hardwareCoreFile(this)
+        val console = core?.let { consoleForCore(it) }
+        if (console == null) {
+            Log.w(TAG, "not writing RetroArch's viewport: core=$core maps to no console")
             mainHandler.post {
                 Toast.makeText(
                     this,
-                    getString(R.string.toast_no_core_dir, profile.console.label(this)),
+                    getString(R.string.toast_unknown_core, core ?: "?"),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return
+        }
+        if (console != ProfilePreference.currentConsole(this)) {
+            Log.i(TAG, "capture: $core is ${console.name}; switching the profile to it")
+            ProfilePreference.setConsole(this, console)
+            mainHandler.post { floatingBallManager?.reloadProfile() }
+        }
+
+        val profile = ProfilePreference.load(this)
+        val folders = manager.coreFoldersFor(console)
+        if (folders.isEmpty()) {
+            Log.w(TAG, "no core config folder for ${console.name}, skipping auto-write")
+            mainHandler.post {
+                Toast.makeText(
+                    this,
+                    getString(R.string.toast_no_core_dir, console.label(this)),
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -449,19 +518,20 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         val result = manager.applyViewport(
             folders,
-            profile.console.nativeWidth * profile.sourceScale,
-            profile.console.nativeHeight * profile.sourceScale,
+            console.nativeWidth * profile.sourceScale,
+            console.nativeHeight * profile.sourceScale,
             profile.effectiveBiasX,
             profile.effectiveBiasY,
             profile.disableRaShader
         )
-        Log.i(TAG, "auto-write on start: ${result.message}")
-        mainHandler.post {
-            Toast.makeText(
-                this,
-                if (result.ok) getString(R.string.toast_configured_restart, profile.console.label(this)) else result.message,
-                Toast.LENGTH_LONG
-            ).show()
+        Log.i(TAG, "capture: wrote the viewport for ${console.name}: ${result.message}")
+        // Only when it went wrong. The dialog the player is looking at right
+        // now already tells them the one thing they have to do next, and a
+        // toast repeating it in other words is how a screen becomes noise.
+        if (!result.ok) {
+            mainHandler.post {
+                Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -872,6 +942,16 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                  */
                 isRenderingActive = false
                 applyRenderingState()
+                /*
+                 * Tell RetroArch where to draw, now.
+                 *
+                 * Queued behind the snapshot on the config thread, so the
+                 * backup is always of the file as the player had it. And before
+                 * the pipeline rather than after: the player is about to be
+                 * shown "close RetroArch and launch the game again", and that
+                 * relaunch is the only moment RetroArch will read this.
+                 */
+                configExecutor.execute { applyConfigOnStart(RetroArchConfigManager(this)) }
                 val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = mpManager.getMediaProjection(resultCode, data)
                 startCapturePipeline()

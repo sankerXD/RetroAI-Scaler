@@ -326,7 +326,12 @@ class MainActivity : AppCompatActivity() {
      * to nothing leaves whatever was chosen before.
      */
     private fun preselectConsoleFromCore() {
-        val core = ShimFrameService.coreFile ?: return
+        // The static dies with the process and this button can be pressed much
+        // later, so the name is persisted alongside the flag that put the
+        // button on screen in the first place.
+        val core = ShimFrameService.coreFile
+            ?: CaptureModePreference.hardwareCoreFile(this)
+            ?: return
         if (core == lastPreselectedCore) return
         lastPreselectedCore = core
         val console = consoleForCore(core) ?: return
@@ -645,12 +650,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Says the one thing left to do after consent.
+     * Says the one thing left to do after consent, and only that.
      *
-     * RetroArch reads its override config only when it loads content, so a
-     * viewport written while a game is already running does not apply to that
-     * game - it has to be started again. §11.3 calls this the deadlock in the
-     * ordering, and it is not one we can undo from here.
+     * It used to explain WHY as well - that RetroArch reads its override only
+     * when it loads content, so the running session cannot pick it up. True,
+     * and beside the point at the moment someone is standing there waiting to
+     * play: the two sentences that are actually instructions were competing
+     * with a sentence that was documentation. §11.3 is where the reason lives.
      */
     private fun showRestartGameNotice() {
         AlertDialog.Builder(this)

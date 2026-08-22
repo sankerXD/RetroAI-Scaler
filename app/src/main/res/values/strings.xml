@@ -138,6 +138,7 @@
     <string name="toast_backup_done">RetroArch config backed up\n%1$s</string>
     <string name="toast_no_core_dir">No core config directory for %1$s - run a game on that platform in RetroArch once first</string>
     <string name="toast_configured_restart">%1$s configured, please restart RetroArch</string>
+    <string name="toast_unknown_core">Cannot tell which console “%1$s” is, so RetroArch\'s config was left alone. Start the game from the frontend once, then try screen recording again.</string>
     <string name="banner_capture_mode_changed">Capture mode changed\nClose RetroArch and load the game again</string>
     <string name="toast_capture_mode_mismatch">Capture mode differed from the prediction and was reconfigured\nRestart RetroArch and load the game again</string>
     <string name="toast_capture_start_failed">Screen capture failed to start, AI enhancement stopped</string>
@@ -245,8 +246,8 @@
     <string name="reload_notice_body">Go back to Pegasus: Settings → Reload.\n\nIf you are running the original Pegasus rather than a modified build, ignore this.</string>
     <string name="capture_needed_title">This console needs screen recording</string>
     <string name="capture_needed_body">It is drawn on the GPU, so the picture cannot be taken from inside the emulator. Screen recording works for it — Android will ask for permission next.</string>
-    <string name="capture_ready_title">Restart the game</string>
-    <string name="capture_ready_body">Close RetroArch and start the game again. RetroArch only reads the new layout when it loads content, so the game running now will not pick it up.</string>
+    <string name="capture_ready_title">One more step</string>
+    <string name="capture_ready_body">Make sure RetroArch is closed. Launch the game again from the frontend.</string>
     <string name="shim_guide_ok">Got it</string>
     <string name="shim_guide_body_restore">Every launch entry goes back to its real core, and any RetroArch config this app wrote is taken back off.</string>
     <string name="shim_link_stop">Disconnect</string>

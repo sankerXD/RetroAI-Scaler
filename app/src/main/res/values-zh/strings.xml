@@ -115,6 +115,7 @@
     <string name="toast_backup_done">RetroArch 配置已备份\n%1$s</string>
     <string name="toast_no_core_dir">没找到 %1$s 的核心配置目录，请先在 RA 里跑一次该平台游戏</string>
     <string name="toast_configured_restart">已配置 %1$s，请重启 RetroArch</string>
+    <string name="toast_unknown_core">认不出「%1$s」是哪个机种，没有改动 RetroArch 的配置。请先从天马G启动一次游戏，再试录屏模式。</string>
     <string name="banner_capture_mode_changed">捕获方式已变更\n请关闭 RetroArch，重新载入游戏</string>
     <string name="toast_capture_mode_mismatch">捕获方式与预期不同，已重新配置\n请重启 RetroArch 后重新载入游戏</string>
     <string name="toast_capture_start_failed">录屏捕获启动失败，已停止 AI 增强</string>
@@ -203,8 +204,8 @@
     <string name="reload_notice_body">回到天马G：设置 → 重新加载。\n\n如果你用的是原版天马G（非大光圈修改版），请无视。</string>
     <string name="capture_needed_title">该平台需要录屏模式</string>
     <string name="capture_needed_body">它是用 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效——接下来系统会请求录屏授权。</string>
-    <string name="capture_ready_title">请重启游戏</string>
-    <string name="capture_ready_body">关闭 RetroArch，然后重新启动游戏。RA 只在载入内容时读取新的画面布局，正在跑的这一局不会生效。</string>
+    <string name="capture_ready_title">还差一步</string>
+    <string name="capture_ready_body">确保你已经关闭 RA。请再次从天马G启动游戏。</string>
     <string name="shim_guide_ok">知道了</string>
     <string name="shim_guide_body_restore">所有启动项都会指回真核心，本 APP 写过的 RetroArch 配置也会一并撤掉。</string>
     <string name="shim_link_stop">断开连接</string>
