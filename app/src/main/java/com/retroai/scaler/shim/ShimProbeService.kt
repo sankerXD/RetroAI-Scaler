@@ -233,7 +233,10 @@ class ShimProbeService : Service() {
             // user's storage is litter, and the two would drift.
             val dir = File(Environment.getExternalStorageDirectory(), "RetroAIScaler/shim")
             dir.mkdirs()
-            val marker = File(dir, "shim-probe.txt")
+            // Name matched to what shim.c opens - the shim logging whether it
+            // can read this from inside RetroArch is the only untested part of
+            // E5, and a filename typo would report that as a failure.
+            val marker = File(dir, "probe.txt")
             val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
             marker.writeText("port=$PORT\nwritten=$stamp\n")
             say("marker written: ${marker.absolutePath}")
