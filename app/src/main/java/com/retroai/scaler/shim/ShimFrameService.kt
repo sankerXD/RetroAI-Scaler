@@ -15,6 +15,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.retroai.scaler.MainActivity
 import com.retroai.scaler.R
+import com.retroai.scaler.jni.NativeBridge
 import java.io.DataInputStream
 import java.io.File
 import java.net.InetAddress
@@ -339,10 +340,95 @@ class ShimFrameService : Service() {
 
             frameListener?.onFrame(payload, lastWidth, lastHeight, lastPitch, lastFormat)
 
-            if (dumpRequested.compareAndSet(true, false)) {
+            if (dumpRequested.get() && readyToDump(payload, bytes, now)) {
+                dumpRequested.set(false)
                 dumpFrame(payload, lastWidth, lastHeight, lastPitch, lastFormat)
             }
         }
+    }
+
+    /**
+     * Holds the dump back until the picture stops moving.
+     *
+     * The pair this produces is only meaningful if both halves show the same
+     * thing, and they are not grabbed at the same instant: the shim frame is
+     * this one, while the capture-path frame comes from whatever the renderer
+     * draws a frame or two later. On a moving picture that gap is a real
+     * difference, and it would be indistinguishable from the colour drift the
+     * whole comparison exists to measure.
+     *
+     * Two consecutive byte-identical frames means nothing is moving - on a
+     * paused game or an in-game menu that happens immediately. The five second
+     * fallback is there so a screen that never settles still yields something
+     * rather than silently never dumping.
+     */
+    private var previousFrame: ByteArray? = null
+    private var armedAtMs = 0L
+
+    private fun readyToDump(payload: ByteArray, bytes: Int, now: Long): Boolean {
+        if (armedAtMs == 0L) armedAtMs = now
+        val prev = previousFrame
+        val still = prev != null && prev.size >= bytes &&
+            java.util.Arrays.equals(prev, 0, bytes, payload, 0, bytes)
+        if (still || now - armedAtMs > 5000) {
+            armedAtMs = 0L
+            if (!still) say("picture never settled - dumping a moving frame, "
+                + "treat any difference as suspect")
+            return true
+        }
+        var keep = prev
+        if (keep == null || keep.size < bytes) keep = ByteArray(bytes)
+        System.arraycopy(payload, 0, keep, 0, bytes)
+        previousFrame = keep
+        return false
+    }
+
+    /**
+     * Grabs the same picture through the OLD capture path and writes it beside
+     * the shim frame.
+     *
+     * This is the measurement risk #1 has been waiting for. The training corpus
+     * was collected through MediaProjection, and its colours do not land on the
+     * RGB565 grid (12 of 240) while the shim's land on it exactly - so a
+     * transform exists somewhere in the capture chain and the model is bound to
+     * it. Whether that matters is a number, and the number needs the same
+     * content down both paths at the same moment.
+     *
+     * Returns quietly when AI enhancement is not running in capture mode:
+     * there is simply no second path to sample then.
+     */
+    private fun dumpCapturePathFrame(stamp: String) {
+        Thread({
+            try {
+                val bridge = NativeBridge()
+                bridge.nativeRequestFrameCapture()
+                val size = IntArray(2)
+                var pixels: ByteArray? = null
+                for (attempt in 0 until 40) {
+                    pixels = bridge.nativeFetchCapturedFrame(size)
+                    if (pixels != null) break
+                    Thread.sleep(25)
+                }
+                val data = pixels
+                val w = size[0]
+                val h = size[1]
+                if (data == null || w <= 0 || h <= 0 || data.size < w * h * 4) {
+                    say("no capture-path frame - is AI enhancement running in "
+                        + "MediaProjection mode with the window detected?")
+                    return@Thread
+                }
+                val dir = File(linkDir(), "compare")
+                dir.mkdirs()
+                val out = File(dir, "capture-$stamp-${w}x$h.png")
+                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                bmp.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(data))
+                out.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bmp.recycle()
+                say("dumped ${out.absolutePath}")
+            } catch (t: Throwable) {
+                say("capture-path dump failed - ${t.javaClass.simpleName}: ${t.message}")
+            }
+        }, "ShimLink-compare").start()
     }
 
     // ------------------------------------------------------------------ dump
@@ -397,7 +483,7 @@ class ShimFrameService : Service() {
                 }
             }
 
-            val dir = File(linkDir(), "frames")
+            val dir = File(linkDir(), "compare")
             dir.mkdirs()
             val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date())
             val out = File(dir, "shim-$stamp-${w}x$h.png")
@@ -406,6 +492,7 @@ class ShimFrameService : Service() {
             bmp.recycle()
             lastDumpPath = out.absolutePath
             say("dumped ${out.absolutePath}")
+            dumpCapturePathFrame(stamp)
         } catch (t: Throwable) {
             say("dump failed - ${t.javaClass.simpleName}: ${t.message}")
         }
