@@ -46,6 +46,18 @@ bool frame_link_alloc(unsigned max_width, unsigned max_height);
 void frame_link_set_format(unsigned pixel_format);
 void frame_link_set_rotation(unsigned rotation);
 
+/*
+ * Tell the app this core renders on the GPU, so no CPU frames will ever come.
+ *
+ * Without this the failure is silent and slow in the worst way: the link
+ * connects, the app waits, no frame ever arrives, and four seconds later the
+ * watchdog kills the service reporting that screen capture produced nothing -
+ * which is not what happened and points at the wrong thing entirely. A core
+ * that asked for hardware rendering is a fact the shim knows the instant it is
+ * asked, so it says so.
+ */
+void frame_link_set_hw_render(bool hardware_rendered);
+
 /* Called from retro_run. `data` must be real pixels: the caller has already
  * rejected NULL and RETRO_HW_FRAME_BUFFER_VALID. */
 void frame_link_publish(const void *data, unsigned width, unsigned height,

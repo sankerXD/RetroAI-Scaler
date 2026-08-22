@@ -605,6 +605,7 @@ static bool shim_env_cb(unsigned cmd, void *data)
          * MediaProjection path (§9). */
         LOGI("core requests HW rendering - refusing, there are no CPU pixels "
              "to take from such a core; the app must fall back to capture");
+        frame_link_set_hw_render(true);
         return false;
     }
 

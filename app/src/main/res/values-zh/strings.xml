@@ -182,13 +182,15 @@
     <string name="capture_auto_stop">停止自动采集　%1$d 张\n%2$s</string>
     <string name="capture_auto_start">开始自动采集</string>
 
-    <string name="shim_link_title">shim 帧链路（门 3）</string>
-    <string name="shim_link_hint">在回环地址上等 RetroArch 里的 shim 送帧过来，端口写在 RetroAIScaler/shim/link.txt。只统计和测量，暂不渲染。</string>
-    <string name="shim_link_start">启动帧链路</string>
-    <string name="shim_link_stop">停止帧链路</string>
+    <string name="toast_shim_hw_core">这个模拟器核心是用 GPU 画的，没法从它内部直接取画面。请改用【启动 AI 增强滤镜】——那条路任何核心都能用。</string>
+    <string name="toast_shim_no_frames">没有收到模拟器传来的画面。请确认已在 RetroArch 里装好配套核心，并且是用它启动的游戏。</string>
+    <string name="shim_link_title">直接从模拟器取画面</string>
+    <string name="shim_link_hint">不录屏，直接从模拟器内部把画面取出来。这样才能做到真正的全屏——模拟器不用再被缩到屏幕一角。需要先在 RetroArch 里装一个配套核心；模拟器用 GPU 绘制的机种（PS1、N64）用不了。</string>
+    <string name="shim_link_start">连接模拟器</string>
+    <string name="shim_link_stop">断开连接</string>
     <string name="shim_link_dump">落盘下一帧</string>
     <string name="shim_link_render">全屏增强</string>
     <string name="shim_link_stop_render">停止增强</string>
     <string name="shim_link_idle">未运行。</string>
-    <string name="shim_link_notification">正在回环地址上等帧</string>
+    <string name="shim_link_notification">正在等待模拟器</string>
 </resources>

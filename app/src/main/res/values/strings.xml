@@ -224,13 +224,15 @@
       Delete along with ShimProbeService.kt once the gate is answered. The
       transcript itself is deliberately untranslated: it is a diagnostic log.
     -->
-    <string name="shim_link_title">Shim frame link (gate 3)</string>
-    <string name="shim_link_hint">Listens on loopback for frames from the libretro shim inside RetroArch, and publishes the port to RetroAIScaler/shim/link.txt. Counts and measures only — nothing is rendered yet.</string>
-    <string name="shim_link_start">Start frame link</string>
-    <string name="shim_link_stop">Stop frame link</string>
+    <string name="toast_shim_hw_core">This emulator core draws on the GPU, so taking the picture directly from it is not possible. Use “Start AI enhancement” instead — that route works with any core.</string>
+    <string name="toast_shim_no_frames">No picture arrived from the emulator. Check that the companion core is installed in RetroArch and that the game was started with it.</string>
+    <string name="shim_link_title">Take the picture straight from the emulator</string>
+    <string name="shim_link_hint">Instead of recording the screen, the picture is taken from inside the emulator. That is what makes true full screen possible: RetroArch no longer has to be shrunk into a corner. Needs a companion core installed in RetroArch first, and does not work with consoles the emulator draws on the GPU (PS1, N64).</string>
+    <string name="shim_link_start">Connect to the emulator</string>
+    <string name="shim_link_stop">Disconnect</string>
     <string name="shim_link_dump">Dump next frame</string>
     <string name="shim_link_render">Render full screen</string>
     <string name="shim_link_stop_render">Stop rendering</string>
     <string name="shim_link_idle">Not running.</string>
-    <string name="shim_link_notification">Waiting for frames on loopback</string>
+    <string name="shim_link_notification">Waiting for the emulator</string>
 </resources>

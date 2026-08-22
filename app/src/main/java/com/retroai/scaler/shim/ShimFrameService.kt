@@ -70,6 +70,7 @@ class ShimFrameService : Service() {
         private const val HEADER_BYTES = 64
         private const val FRAME_MAGIC = 0x31494152  // "RAI1"
         private const val HELLO_MAGIC = 0x48494152  // "RAIH"
+        private const val NOTICE_MAGIC = 0x43494152 // "RAIC"
         private const val WIRE_VERSION = 1
 
         /** Cap on a single frame, so a corrupt length cannot make us allocate
@@ -91,6 +92,17 @@ class ShimFrameService : Service() {
         @Volatile var measuredFps = 0.0
         @Volatile var averageFps = 0.0
         @Volatile var connected = false
+
+        /**
+         * The loaded core renders on the GPU, so no CPU frames exist to take.
+         *
+         * The shim knows this the instant the core asks for hardware rendering
+         * and says so over the link, because the alternative is the worst kind
+         * of failure: the link connects, nothing ever arrives, and four seconds
+         * later the watchdog blames screen capture for producing nothing - which
+         * is not what happened and sends the reader somewhere else entirely.
+         */
+        @Volatile var hardwareRenderedCore = false
 
         /** Set by the UI; the next frame to arrive is written out as a PNG. */
         val dumpRequested = AtomicBoolean(false)
@@ -124,6 +136,7 @@ class ShimFrameService : Service() {
         measuredFps = 0.0
         averageFps = 0.0
         connected = false
+        hardwareRenderedCore = false
         stopping = false
         isRunning = true
 
@@ -208,6 +221,19 @@ class ShimFrameService : Service() {
             }
         }
         say("listener exited")
+    }
+
+    /**
+     * Short `key=value` lines the shim sends out of band. Unknown keys are
+     * logged and ignored on purpose, so an older app and a newer shim keep
+     * working rather than failing at each other.
+     */
+    private fun handleNotice(text: String) {
+        say("notice from shim: $text")
+        when {
+            text == "hw_render=1" -> hardwareRenderedCore = true
+            text == "hw_render=0" -> hardwareRenderedCore = false
+        }
     }
 
     private fun publishLinkFile(port: Int, token: String): Boolean {
@@ -304,6 +330,16 @@ class ShimFrameService : Service() {
         while (!stopping) {
             input.readFully(header)
             val h = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+            if (h.getInt(0) == NOTICE_MAGIC) {
+                val n = h.getInt(20)
+                if (n !in 0..256) {
+                    say("refusing notice of $n bytes")
+                    return
+                }
+                val text = ByteArray(n).also { if (n > 0) input.readFully(it) }
+                handleNotice(String(text))
+                continue
+            }
             if (h.getInt(0) != FRAME_MAGIC) {
                 say("stream desynchronised: magic 0x%08x".format(h.getInt(0)))
                 return

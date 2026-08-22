@@ -207,6 +207,28 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      */
     private val watchdogRunnable = object : Runnable {
         override fun run() {
+            /*
+             * A core that draws on the GPU hands libretro a sentinel instead of
+             * pixels, so there is nothing for the shim to send and no amount of
+             * waiting will produce one. Say that plainly and stop, rather than
+             * letting the stall detector arrive four seconds later and blame
+             * screen capture - which is not running at all in this mode.
+             *
+             * This cannot fall back on its own: capture needs the projection
+             * consent dialog, and a Service has nowhere to show it. So the job
+             * here is to tell the player exactly which button to press instead.
+             */
+            if (shimMode && ShimFrameService.hardwareRenderedCore) {
+                Log.w(TAG, "core renders on the GPU - the shim has no frames to give")
+                Toast.makeText(
+                    this@OverlayService,
+                    getString(R.string.toast_shim_hw_core),
+                    Toast.LENGTH_LONG
+                ).show()
+                stopSelf()
+                return
+            }
+
             val bridge = frameSource
             // A paused pipeline produces no frames by design - do not let the
             // stall detector interpret that as a broken pipeline.
@@ -215,9 +237,15 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 if (bridge.renderedFrames == 0L && now - bridge.startedAtMs > FIRST_FRAME_TIMEOUT_MS) {
                     Log.e(TAG, "No frame ever reached the renderer - shutting down.")
                     nativeBridge.nativeClearOverlay()
+                    // Two very different causes, so two different messages.
+                    // "check your screen recording permission" is actively
+                    // misleading in a mode that never asked for one.
                     Toast.makeText(
                         this@OverlayService,
-                        getString(R.string.toast_no_frames),
+                        getString(
+                            if (shimMode) R.string.toast_shim_no_frames
+                            else R.string.toast_no_frames
+                        ),
                         Toast.LENGTH_LONG
                     ).show()
                     stopSelf()

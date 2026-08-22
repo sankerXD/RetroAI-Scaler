@@ -29,6 +29,9 @@
 #define WIRE_VERSION 1
 #define FRAME_MAGIC  0x31494152u   /* "RAI1" */
 #define HELLO_MAGIC  0x48494152u   /* "RAIH" */
+/* A short ASCII key=value line rather than a frame. Self-describing, readable
+ * in a log, and an app that does not know a key can ignore it and carry on. */
+#define NOTICE_MAGIC 0x43494152u   /* "RAIC" */
 #define TOKEN_MAX    64
 
 /* Exactly 64 bytes, little-endian, which is what both ends are. Asserted at
@@ -74,6 +77,8 @@ static atomic_uint   g_pixel_format = 2;   /* RGB565 until told otherwise */
 static atomic_uint   g_rotation;
 static int           g_sock = -1;
 static bool          g_warned_oversize;
+static atomic_bool   g_hw_render;
+static atomic_bool   g_notice_sent;
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -173,6 +178,7 @@ static int connect_to_app(void)
     }
 
     LOGI("frame link connected to 127.0.0.1:%d", port);
+    atomic_store(&g_notice_sent, false);
     return fd;
 }
 
@@ -193,6 +199,21 @@ static void *sender_main(void *unused)
                 continue;
             }
             atomic_store(&g_connected, true);
+        }
+
+        if (!atomic_load(&g_notice_sent)) {
+            const char *line = atomic_load(&g_hw_render) ? "hw_render=1"
+                                                         : "hw_render=0";
+            struct wire_header n;
+            memset(&n, 0, sizeof(n));
+            n.magic         = NOTICE_MAGIC;
+            n.version       = WIRE_VERSION;
+            n.payload_bytes = (uint32_t)strlen(line);
+            n.timestamp_ns  = now_ns();
+            if (send_all(g_sock, &n, sizeof(n)) && send_all(g_sock, line, strlen(line))) {
+                atomic_store(&g_notice_sent, true);
+                LOGI("told the app: %s", line);
+            }
         }
 
         struct timespec deadline;
@@ -288,6 +309,15 @@ void frame_link_set_format(unsigned pixel_format)
 void frame_link_set_rotation(unsigned rotation)
 {
     atomic_store(&g_rotation, rotation);
+}
+
+void frame_link_set_hw_render(bool hardware_rendered)
+{
+    atomic_store(&g_hw_render, hardware_rendered);
+    /* Force a resend: a core can ask for hardware rendering after the link is
+     * already up, and a notice the app never hears is the same as no notice. */
+    atomic_store(&g_notice_sent, false);
+    sem_post(&g_wake);
 }
 
 void frame_link_start(void)
