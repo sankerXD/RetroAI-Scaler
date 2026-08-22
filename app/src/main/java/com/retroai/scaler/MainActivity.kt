@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.CaptureModePreference
 import com.retroai.scaler.detector.PegasusConfigManager
+import com.retroai.scaler.detector.RetroArchBackupManager
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
 import com.retroai.scaler.ui.AppLanguage
@@ -126,14 +127,17 @@ class MainActivity : AppCompatActivity() {
                 if (!manager.hasModifiedFiles()) return@Thread
                 val result = manager.restoreFromLatestBackup()
                 Log.i(TAG, "healed leftover RetroArch config: ${result.message}")
-                if (result.ok) {
-                    runOnUiThread {
-                        Toast.makeText(
-                            this,
-                            getString(R.string.toast_restored_stale_config),
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
+                runOnUiThread {
+                    // A failure gets said out loud too. This heal running,
+                    // reporting nothing, and leaving the viewport in place is
+                    // precisely how RetroArch stayed stuck in its corner while
+                    // every screen in this app claimed to be clean.
+                    Toast.makeText(
+                        this,
+                        if (result.ok) getString(R.string.toast_restored_stale_config)
+                        else result.message,
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "healing leftover config failed", e)
@@ -741,16 +745,52 @@ class MainActivity : AppCompatActivity() {
         }.apply { name = "LaunchApply"; isDaemon = true }.start()
     }
 
-    /** Puts every launch line back to its real core. */
+    /**
+     * Undo, and undo everything.
+     *
+     * This button used to put the launch lines back and stop there, which was
+     * wrong in the one way an undo must not be: it left the OTHER thing this
+     * app writes - RetroArch's per-core viewport override, from a screen
+     * capture session - in place. The player then reloaded the frontend, opened
+     * a game, and found RetroArch drawing into the bottom-right corner with the
+     * app already saying it had undone everything. Whichever console's override
+     * was written is not necessarily the one they were playing, so the damage
+     * usually surfaces on a completely different platform later, with nothing
+     * connecting it back to here.
+     *
+     * The config half is a no-op on a machine that only ever ran direct mode -
+     * that route writes no RetroArch keys at all - so this costs nothing in the
+     * normal case and is the only way back in the abnormal one.
+     */
     private fun restoreLaunchFiles() {
         Thread {
             val result = runCatching { PegasusConfigManager().restore() }
                 .getOrElse { PegasusConfigManager.Result(0, 0, it.message ?: "failed") }
             shimConvertedCount = 0
             Log.i(TAG, "launch restore: ${result.message}")
+
+            val config = RetroArchConfigManager(applicationContext)
+            val configResult = runCatching {
+                if (config.hasModifiedFiles()) config.restoreFromLatestBackup() else null
+            }.getOrElse {
+                Log.w(TAG, "restoring RetroArch's config failed", it)
+                RetroArchBackupManager.Result(false, it.message ?: "failed")
+            }
+            configResult?.let { Log.i(TAG, "config restore on undo: ${it.message}") }
+
             runOnUiThread {
                 updateShimProbeUi()
-                if (!isFinishing) showReloadNotice()
+                if (isFinishing) return@runOnUiThread
+                // Only when there was something to say. A clean machine gets
+                // the reload notice and nothing else.
+                configResult?.let {
+                    Toast.makeText(
+                        this,
+                        if (it.ok) getString(R.string.toast_restored_stale_config) else it.message,
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                showReloadNotice()
             }
         }.apply { name = "LaunchRestore"; isDaemon = true }.start()
     }

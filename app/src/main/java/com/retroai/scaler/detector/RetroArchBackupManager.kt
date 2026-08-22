@@ -16,6 +16,13 @@ import java.util.concurrent.TimeUnit
  *  - full snapshot of everything reachable, not just the files being patched
  *  - checked on every service start; taken if missing or older than 15 days
  *  - restoring NEVER deletes a snapshot, so older ones stay available
+ *  - a snapshot never contains our own edit, even when one is live at the time
+ *    it is taken - see [cleanCopyOf]
+ *
+ * The snapshots are no longer the primary way back, though. A patched file
+ * records what it displaced, in itself, and that record is what a restore
+ * prefers ([RetroArchOverridePatch]). These stay as the answer to a corrupt
+ * file, which a self-describing edit cannot help with.
  *
  * What is deliberately NOT included: RetroArch's main retroarch.cfg. It lives
  * in Android/data/<pkg>/files/, which Android 11+ blocks for every third-party
@@ -99,6 +106,7 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
 
         var copied = 0
         var skipped = 0
+        var sanitised = 0
         var bytes = 0L
         configRoot.walkTopDown().forEach { src ->
             if (!src.isFile) return@forEach
@@ -110,12 +118,36 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
             val dst = File(target, rel.path)
             try {
                 dst.parentFile?.mkdirs()
-                src.copyTo(dst, overwrite = true)
+                /*
+                 * A snapshot must never contain our own edit.
+                 *
+                 * Callers restore before they snapshot for exactly this reason,
+                 * but that only works when the restore had something to restore
+                 * FROM - on a first run, or after the snapshots were pruned, it
+                 * has nothing, and the very next line would then enshrine our
+                 * viewport as the user's original. From then on every restore
+                 * "succeeds" and puts the corner window straight back, forever,
+                 * with nothing anywhere reporting a problem.
+                 *
+                 * So the copy goes through the same un-patcher the restore
+                 * uses. The file on disk is left exactly as it is; only what
+                 * lands in the snapshot is cleaned.
+                 */
+                val clean = cleanCopyOf(src)
+                if (clean != null) {
+                    dst.writeText(clean.joinToString("\n") + "\n")
+                    sanitised++
+                } else {
+                    src.copyTo(dst, overwrite = true)
+                }
                 copied++
                 bytes += src.length()
             } catch (e: Exception) {
                 Log.e(TAG, "backup copy failed: ${src.absolutePath}", e)
             }
+        }
+        if (sanitised > 0) {
+            Log.w(TAG, "snapshot: $sanitised file(s) still carried our marker and were un-patched first")
         }
 
         try {
@@ -148,6 +180,21 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
         )
     }
 
+    /**
+     * The version of [src] that belongs in a snapshot, or null when the file on
+     * disk is already free of our edits and can simply be copied.
+     */
+    private fun cleanCopyOf(src: File): List<String>? {
+        if (!src.name.endsWith(".cfg", ignoreCase = true)) return null
+        val lines = try {
+            src.readLines()
+        } catch (e: Exception) {
+            return null
+        }
+        if (!RetroArchOverridePatch.isOurs(lines)) return null
+        return RetroArchOverridePatch.unpatch(lines) ?: RetroArchOverridePatch.strip(lines)
+    }
+
     /** Keeps the newest [MAX_SNAPSHOTS] snapshots, deletes the rest. */
     private fun pruneOldSnapshots(): Int {
         val snapshots = listSnapshots()
@@ -167,71 +214,138 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
         return deleted
     }
 
-    /**
-     * Puts back only the files this tool actually modified (they carry the
-     * marker line), taken from the newest snapshot. The snapshot itself is kept.
-     */
     /** True if any config still carries our marker, i.e. a session did not clean up. */
-    fun hasModifiedFiles(markers: List<String>): Boolean =
-        configRoot.walkTopDown().any { f ->
+    fun hasModifiedFiles(markers: List<String>): Boolean = modifiedFiles(markers).isNotEmpty()
+
+    private fun modifiedFiles(markers: List<String>): List<File> =
+        configRoot.walkTopDown().filter { f ->
             f.isFile && f.name.endsWith(".cfg", ignoreCase = true) &&
                     try { f.useLines { l -> l.any { it.trim() in markers } } } catch (e: Exception) { false }
-        }
+        }.toList()
 
+    /**
+     * Takes our edit back off every file that carries the marker.
+     *
+     * Three ways back, tried in this order, because they are ordered by how
+     * much they can promise:
+     *
+     *  1. **the file's own record** - exact, per key, and it leaves alone
+     *     anything the player changed in that file since. Present on every file
+     *     patched by this build or later.
+     *  2. **the newest snapshot** - the whole file as it was on that date. For
+     *     files patched by an older build, which carry no record.
+     *  3. **stripping our keys** - for a file with neither. An override is a
+     *     layer over retroarch.cfg, so a deleted key falls through to the
+     *     player's real setting; see [RetroArchOverridePatch.strip].
+     *
+     * There used to be only (2), and it could not succeed at all when the
+     * snapshot was missing the file - or, worse, when the snapshot had been
+     * taken while our own edit was live, in which case restoring wrote our
+     * viewport straight back and reported success for doing it. **Every file is
+     * therefore re-read afterwards**: still carrying the marker is a failure,
+     * whatever the step in front of it returned.
+     *
+     * Snapshots are never deleted here. A restore must not reduce the safety
+     * net.
+     */
     fun restoreFromLatest(markers: List<String>): Result {
         val snapshot = latestSnapshot()
-            ?: return Result(false, context.getString(R.string.backup_none_available))
-        val snapConfig = File(snapshot, "config")
-        if (!snapConfig.isDirectory) {
-            return Result(false, context.getString(R.string.backup_incomplete, snapshot.name))
-        }
+        val snapConfig = snapshot?.let { File(it, "config") }?.takeIf { it.isDirectory }
 
         var restored = 0
-        val missing = mutableListOf<String>()
+        var fromSnapshot = 0
+        var strippedKeys = 0
+        val failed = mutableListOf<String>()
 
-        configRoot.walkTopDown().forEach { live ->
-            if (!live.isFile || !live.name.endsWith(".cfg", ignoreCase = true)) return@forEach
-            val isOurs = try {
-                live.useLines { lines -> lines.any { it.trim() in markers } }
+        for (live in modifiedFiles(markers)) {
+            val rel = live.relativeToOrNull(configRoot)?.path ?: live.name
+            val lines = try {
+                live.readLines()
             } catch (e: Exception) {
-                false
+                Log.e(TAG, "restore could not read ${live.absolutePath}", e)
+                failed.add(rel)
+                continue
             }
-            if (!isOurs) return@forEach
 
-            val rel = live.relativeToOrNull(configRoot) ?: return@forEach
-            val backupFile = File(snapConfig, rel.path)
-            if (!backupFile.isFile) {
-                missing.add(rel.path)
-                return@forEach
-            }
-            // Write to a sibling temp file and rename: if the process is killed
-            // half way through a restore, the live config is either the old one
-            // or the new one, never a truncated hybrid.
-            val tmp = File(live.parentFile, live.name + ".rascaler-tmp")
-            try {
-                backupFile.copyTo(tmp, overwrite = true)
-                if (tmp.renameTo(live)) {
-                    restored++
-                } else {
-                    backupFile.copyTo(live, overwrite = true)
-                    tmp.delete()
-                    restored++
+            var how = "record"
+            var out = RetroArchOverridePatch.unpatch(lines)
+            if (out == null) {
+                // No record: an older build wrote this. The snapshot is the
+                // next best thing - unless it holds our own edit, which is the
+                // failure this whole ordering exists to survive.
+                val backupFile = snapConfig?.let { File(it, rel) }?.takeIf { it.isFile }
+                val backupLines = backupFile?.let {
+                    try { it.readLines() } catch (e: Exception) { null }
                 }
+                if (backupLines != null && !RetroArchOverridePatch.isOurs(backupLines)) {
+                    out = backupLines
+                    how = "snapshot"
+                    fromSnapshot++
+                } else {
+                    out = RetroArchOverridePatch.strip(lines)
+                    how = "stripped"
+                    strippedKeys++
+                }
+            }
+
+            if (!writeAtomically(live, out)) {
+                failed.add(rel)
+                continue
+            }
+            // Believe the file, not the step that just wrote it.
+            val stillOurs = try {
+                RetroArchOverridePatch.isOurs(live.readLines())
             } catch (e: Exception) {
-                Log.e(TAG, "restore failed: ${live.absolutePath}", e)
-                tmp.delete()
-                missing.add(rel.path)
+                true
+            }
+            if (stillOurs) {
+                Log.e(TAG, "restore left our marker in ${live.absolutePath} (via $how)")
+                failed.add(rel)
+            } else {
+                Log.i(TAG, "restored ${live.absolutePath} via $how")
+                restored++
             }
         }
 
         val message = buildString {
-            append(context.getString(R.string.backup_restored, restored, snapshot.name))
+            append(context.getString(R.string.backup_restored_files, restored))
+            if (fromSnapshot > 0) {
+                append(context.getString(
+                    R.string.backup_restored_via_snapshot,
+                    fromSnapshot,
+                    snapshot?.name ?: "-"
+                ))
+            }
+            if (strippedKeys > 0) {
+                append(context.getString(R.string.backup_restored_via_strip, strippedKeys))
+            }
             append(context.getString(R.string.backup_restored_kept, listSnapshots().size))
-            if (missing.isNotEmpty()) {
-                append(context.getString(R.string.backup_restore_missing, missing.size))
-                append(missing.take(4).joinToString("\n"))
+            if (failed.isNotEmpty()) {
+                append(context.getString(R.string.backup_restore_failed, failed.size))
+                append(failed.take(4).joinToString("\n"))
             }
         }
-        return Result(restored > 0 || missing.isEmpty(), message)
+        return Result(failed.isEmpty(), message)
+    }
+
+    /**
+     * Temp file plus rename, so a process killed half way through a restore
+     * leaves the live config as either the old one or the new one, never a
+     * truncated hybrid. The temp is a sibling because a cross-filesystem rename
+     * is not atomic, and on a removable volume that is not hypothetical.
+     */
+    private fun writeAtomically(target: File, lines: List<String>): Boolean {
+        val tmp = File(target.parentFile, target.name + ".rascaler-tmp")
+        return try {
+            tmp.writeText(lines.joinToString("\n") + "\n")
+            if (tmp.renameTo(target)) return true
+            target.writeText(lines.joinToString("\n") + "\n")
+            tmp.delete()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "restore write failed: ${target.absolutePath}", e)
+            tmp.delete()
+            false
+        }
     }
 }

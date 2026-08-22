@@ -195,11 +195,11 @@
     <string name="backup_done">Backed up %1$d config file(s) (%2$d KB)\n%3$s</string>
     <string name="backup_kept">\nKeeping %1$d/%2$d snapshots</string>
     <string name="backup_pruned">, pruned %1$d oldest</string>
-    <string name="backup_none_available">No backup available</string>
-    <string name="backup_incomplete">Backup %1$s is incomplete</string>
-    <string name="backup_restored">Restored %1$d file(s) from backup %2$s</string>
+    <string name="backup_restored_files">Restored %1$d RetroArch config file(s)</string>
+    <string name="backup_restored_via_snapshot">\n%1$d of them from snapshot %2$s</string>
+    <string name="backup_restored_via_strip">\n%1$d had no record and no usable snapshot; our keys were removed instead</string>
     <string name="backup_restored_kept">\n(the backup is kept; %1$d in total)</string>
-    <string name="backup_restore_missing">\n⚠ %1$d file(s) were not in that backup:\n</string>
+    <string name="backup_restore_failed">\n⚠ %1$d file(s) could not be restored:\n</string>
     <string name="backup_note_header">RetroAI-Scaler config backup</string>
     <string name="backup_note_time">Time: %1$s</string>
     <string name="backup_note_reason">Reason: %1$s</string>
@@ -248,7 +248,7 @@
     <string name="capture_ready_title">Restart the game</string>
     <string name="capture_ready_body">Close RetroArch and start the game again. RetroArch only reads the new layout when it loads content, so the game running now will not pick it up.</string>
     <string name="shim_guide_ok">Got it</string>
-    <string name="shim_guide_body_restore">Every launch entry will be restored.</string>
+    <string name="shim_guide_body_restore">Every launch entry goes back to its real core, and any RetroArch config this app wrote is taken back off.</string>
     <string name="shim_link_stop">Disconnect</string>
     <string name="shim_link_dump">Dump next frame</string>
     <string name="shim_link_idle">Not running.</string>

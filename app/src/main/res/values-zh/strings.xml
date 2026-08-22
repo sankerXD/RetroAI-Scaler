@@ -159,11 +159,11 @@
     <string name="backup_done">已备份 %1$d 个配置文件 (%2$d KB)\n%3$s</string>
     <string name="backup_kept">\n保留 %1$d/%2$d 份</string>
     <string name="backup_pruned">，已清理 %1$d 份最旧的</string>
-    <string name="backup_none_available">没有任何备份可用</string>
-    <string name="backup_incomplete">备份 %1$s 不完整</string>
-    <string name="backup_restored">已从备份 %2$s 还原 %1$d 个文件</string>
+    <string name="backup_restored_files">已还原 %1$d 个 RetroArch 配置文件</string>
+    <string name="backup_restored_via_snapshot">\n其中 %1$d 个来自快照 %2$s</string>
+    <string name="backup_restored_via_strip">\n有 %1$d 个既没有记录、也没有可用快照，改为删掉我们写的那几个键</string>
     <string name="backup_restored_kept">\n（备份已保留，共 %1$d 份）</string>
-    <string name="backup_restore_missing">\n⚠ %1$d 个文件在该备份中找不到:\n</string>
+    <string name="backup_restore_failed">\n⚠ %1$d 个文件还原失败:\n</string>
     <string name="backup_note_header">RetroAI-Scaler 配置备份</string>
     <string name="backup_note_time">时间: %1$s</string>
     <string name="backup_note_reason">原因: %1$s</string>
@@ -206,7 +206,7 @@
     <string name="capture_ready_title">请重启游戏</string>
     <string name="capture_ready_body">关闭 RetroArch，然后重新启动游戏。RA 只在载入内容时读取新的画面布局，正在跑的这一局不会生效。</string>
     <string name="shim_guide_ok">知道了</string>
-    <string name="shim_guide_body_restore">所有启动项都会恢复。</string>
+    <string name="shim_guide_body_restore">所有启动项都会指回真核心，本 APP 写过的 RetroArch 配置也会一并撤掉。</string>
     <string name="shim_link_stop">断开连接</string>
     <string name="shim_link_dump">落盘下一帧</string>
     <string name="shim_link_idle">未运行。</string>
