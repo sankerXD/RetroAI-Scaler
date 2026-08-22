@@ -92,6 +92,19 @@ static retro_video_refresh_t g_video_cb;
 
 static unsigned long g_frames;
 
+/* Instrumentation for the "core does not support save states" symptom.
+ *
+ * RetroArch refusing save states has two causes that look identical from the
+ * outside: it asked us and we answered zero (a forwarding bug here), or it
+ * never asked at all - since 1.16 the savestate menu is gated on
+ * savestate_support_level, which comes from the core's .info file, and the shim
+ * has none. A log line at the call site tells the two apart in one launch:
+ * no line means nobody asked, and the fault is upstream of this file.
+ * Deliberately bounded, so it cannot become per-frame noise. */
+static unsigned g_serialize_queries;
+static bool     g_logged_sysinfo;
+static bool     g_logged_memsize[2];
+
 /* ------------------------------------------------------------------ helpers */
 
 /*
@@ -350,6 +363,15 @@ RETRO_API void retro_get_system_info(struct retro_system_info *info)
          * shim being invisible in this one function is what keeps every path
          * on the device pointing where it did before. */
         g_core.get_system_info(info);
+        if (!g_logged_sysinfo) {
+            g_logged_sysinfo = true;
+            LOGI("system_info: name='%s' version='%s' ext='%s' "
+                 "need_fullpath=%d block_extract=%d",
+                 info->library_name     ? info->library_name     : "(null)",
+                 info->library_version  ? info->library_version  : "(null)",
+                 info->valid_extensions ? info->valid_extensions : "(null)",
+                 (int)info->need_fullpath, (int)info->block_extract);
+        }
         return;
     }
 
@@ -399,22 +421,39 @@ RETRO_API void *retro_get_memory_data(unsigned id)
 
 RETRO_API size_t retro_get_memory_size(unsigned id)
 {
-    return ensure() ? g_core.get_memory_size(id) : 0;
+    size_t n = ensure() ? g_core.get_memory_size(id) : 0;
+    /* id 0 is RETRO_MEMORY_SAVE_RAM - a non-zero answer here is what makes
+     * battery saves (.srm) work, and it is a different mechanism from save
+     * states, so the two symptoms must not be read as one. */
+    if (id < 2 && !g_logged_memsize[id]) {
+        g_logged_memsize[id] = true;
+        LOGI("memory_size(%u) -> %zu", id, n);
+    }
+    return n;
 }
 
 RETRO_API size_t retro_serialize_size(void)
 {
-    return ensure() ? g_core.serialize_size() : 0;
+    size_t n = ensure() ? g_core.serialize_size() : 0;
+    if (g_serialize_queries < 4) {
+        g_serialize_queries++;
+        LOGI("serialize_size -> %zu (query #%u)", n, g_serialize_queries);
+    }
+    return n;
 }
 
 RETRO_API bool retro_serialize(void *data, size_t size)
 {
-    return ensure() ? g_core.serialize(data, size) : false;
+    bool ok = ensure() ? g_core.serialize(data, size) : false;
+    LOGI("serialize(size=%zu) -> %d", size, (int)ok);
+    return ok;
 }
 
 RETRO_API bool retro_unserialize(const void *data, size_t size)
 {
-    return ensure() ? g_core.unserialize(data, size) : false;
+    bool ok = ensure() ? g_core.unserialize(data, size) : false;
+    LOGI("unserialize(size=%zu) -> %d", size, (int)ok);
+    return ok;
 }
 
 RETRO_API void retro_cheat_reset(void)
