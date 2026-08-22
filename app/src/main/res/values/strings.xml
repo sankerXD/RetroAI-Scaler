@@ -20,7 +20,6 @@
     <string name="btn_start_service">Start AI enhancement</string>
     <string name="btn_stop_service">Stop the service</string>
     <string name="hw_detecting">Detecting hardware…</string>
-    <string name="usage_hint">How to use: start AI enhancement, wait for capture to begin, then launch a game from your frontend</string>
 
     <!-- Main screen: console section -->
     <string name="section_console">Console</string>
@@ -236,8 +235,11 @@
     <string name="shim_status">%1$d of %2$d consoles are set up</string>
     <string name="shim_status_none">Not set up yet — press “How to set it up”</string>
     <string name="toast_launch_restored">Put %1$d launch entries back. Reload the library in your frontend.</string>
-    <string name="shim_guide_title">One-time setup</string>
-    <string name="shim_guide_body">In RetroArch:\n\n1. Load Core → Install or Restore a Core\n2. Pick the file at:\n%1$s\n3. Load Core again and pick the entry marked (RetroAI)\n\nThen come back here and press “2 · Update the launcher”.\n\nIf a game ever fails to start, press “Undo”.</string>
+    <string name="shim_guide_title">First-time setup</string>
+    <string name="shim_guide_core_title">Core setup</string>
+    <string name="shim_guide_start">Start setup</string>
+    <string name="shim_guide_retroarch">In RetroArch:\n\n1. Main Menu → Load Core → Install or Restore a Core, and pick\n%1$s\n\n2. Main Menu → Load Core, and select “Nintendo - Game Boy Advance (VBA-M) (RetroAI)”.\nMake sure it says RetroAI — the wrong core will not set anything up.</string>
+    <string name="shim_guide_launcher">In your launcher:\n\nCome back to this app and press “2 · Update the launcher”.</string>
     <string name="reload_notice_title">Reload your library</string>
     <string name="reload_notice_body">Go back to Pegasus: Settings → Reload.\n\nIf you are running the original Pegasus rather than a modified build, ignore this.</string>
     <string name="shim_guide_ok">Got it</string>

@@ -16,7 +16,6 @@
     <string name="btn_start_service">启动 AI 增强滤镜</string>
     <string name="btn_stop_service">停止外挂服务</string>
     <string name="hw_detecting">硬件检测中…</string>
-    <string name="usage_hint">使用指南：启动 AI 增强后，等待捕获完成，在天马 G 启动游戏</string>
 
     <string name="section_console">游玩机种</string>
     <string name="btn_change">更换</string>
@@ -194,8 +193,11 @@
     <string name="shim_status">%1$d / %2$d 个机种已设置</string>
     <string name="shim_status_none">还没设置——点【怎么设置】</string>
     <string name="toast_launch_restored">已还原 %1$d 条启动项。请在前端里重新加载一次游戏库。</string>
-    <string name="shim_guide_title">一次性设置</string>
-    <string name="shim_guide_body">在 RetroArch 里：\n\n1. 加载核心 → 安装和还原核心\n2. 选这个文件：\n%1$s\n3. 再点一次【加载核心】，选中列表里带 (RetroAI) 的那一项\n\n然后回到这里，点【2 · 覆盖天马G配置】。\n\n万一有游戏打不开，点【撤销】。</string>
+    <string name="shim_guide_title">初始化设置</string>
+    <string name="shim_guide_core_title">核心设置</string>
+    <string name="shim_guide_start">开始设置</string>
+    <string name="shim_guide_retroarch">RA 设置：\n\n1. 菜单 → 加载核心 → 安装或还原核心，加载\n%1$s\n\n2. 菜单 → 加载核心，选中「Nintendo - Game Boy Advance (VBA-M) (RetroAI)」完成初始化。\n注意认准 RetroAI，选错核心将无法初始化。</string>
+    <string name="shim_guide_launcher">天马G 设置：\n\n回到本 APP，点击【2 · 覆盖天马G配置】。</string>
     <string name="reload_notice_title">需要重新加载游戏库</string>
     <string name="reload_notice_body">回到天马G：设置 → 重新加载。\n\n如果你用的是原版天马G（非大光圈修改版），请无视。</string>
     <string name="shim_guide_ok">知道了</string>

@@ -81,15 +81,6 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 
-                <TextView
-                    android:id="@+id/tvUsageGuide"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:lineSpacingExtra="3dp"
-                    android:text="@string/usage_hint"
-                    android:textColor="@color/accent_green_dim"
-                    android:textSize="13sp" />
             </LinearLayout>
 
             <!--

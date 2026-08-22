@@ -234,13 +234,44 @@ class FloatingBallManager(
         if (matched != null && matched != profile.console) {
             ProfilePreference.setConsole(context, matched)
             profile = ProfilePreference.load(context)
-            Log.i(TAG, "frames are ${width}x$height - switched to ${matched.name}")
-        } else {
-            Log.i(TAG, "frames are ${width}x$height" +
-                if (matched == null) " (no console matches; keeping ${profile.console.name})" else "")
         }
+
+        val scale = scaleForOutput(width, height)
+        if (scale != null) profile.aiScale = scale
+        Log.i(TAG, "frames are ${width}x$height -> " +
+            (matched?.name ?: "no console match, keeping ${profile.console.name}") +
+            ", output ${outputMultiple(width, height)}x, AI ${profile.aiScale.label}")
         pushAllSettings()
         return true
+    }
+
+    /** Whole output pixels covering one game pixel, at the current size. */
+    private fun outputMultiple(nativeWidth: Int, nativeHeight: Int): Int =
+        if (nativeWidth <= 0 || nativeHeight <= 0) 1
+        else minOf(screenWidth / nativeWidth, screenHeight / nativeHeight).coerceAtLeast(1)
+
+    /**
+     * Picks the AI scale from the geometry instead of asking anyone to guess.
+     *
+     * AGENT.md §15.6 asked for exactly this and could not have it: with screen
+     * capture the scale was a per-console preference, saved and reloaded, and
+     * nothing measured the multiple the picture was actually drawn at. So a
+     * console switch kept the previous console's scale, the network
+     * reconstructed onto a grid of uNativeRes x aiScale that the output was not
+     * drawn on, and §3's snapping resampled the detail it had just rebuilt.
+     * Measured: Game Boy Color at 6x followed by an NES at 248x224, which is
+     * drawn at 4x - the picture came out soft and looked like it had inherited
+     * the previous console.
+     *
+     * Rounding up rather than down when the multiple is not one we have a model
+     * for: too large means detail is computed and then discarded, too small
+     * means the network's output is upscaled again afterwards. Only the second
+     * is visible, and softness is the one thing this project fights hardest.
+     */
+    private fun scaleForOutput(width: Int, height: Int): AiScale? {
+        val k = outputMultiple(width, height)
+        val usable = AiScale.entries.filter { it.factor >= 2 }.sortedBy { it.factor }
+        return usable.firstOrNull { it.factor >= k } ?: usable.lastOrNull()
     }
 
     fun pushAllSettings() {
@@ -987,6 +1018,10 @@ class FloatingBallManager(
 
     /** Output pixels covering one game pixel - both retro effects scale with it. */
     private fun outputPixelsPerGamePixel(): Float {
+        // From the measured size when we have one: the retro effects are scaled
+        // by this, and with the picture coming from the emulator the declared
+        // console's dimensions are not what is on screen.
+        nativeSizeOverride?.let { (w, h) -> return outputMultiple(w, h).toFloat() }
         val out = profile.getOutputRect(screenWidth, screenHeight)
         if (profile.console.nativeWidth <= 0) return 0f
         return minOf(

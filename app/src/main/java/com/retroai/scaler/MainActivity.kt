@@ -201,7 +201,7 @@ class MainActivity : AppCompatActivity() {
         btnShimDump = findViewById(R.id.btnShimDump)
         btnShimStart = findViewById(R.id.btnShimStart)
         tvShimProbe = findViewById(R.id.tvShimProbe)
-        btnShimProbe.setOnClickListener { showSetupGuide() }
+        btnShimProbe.setOnClickListener { showSetupGuide(coreOnly = true) }
         btnShimStart.setOnClickListener { applyLaunchFiles() }
         btnShimDump.setOnClickListener { confirmRestoreLaunchFiles() }
         btnShimCapture = findViewById(R.id.btnShimCapture)
@@ -218,13 +218,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showSetupGuide() {
+    /**
+     * The one-time setup, or just its RetroArch half.
+     *
+     * [coreOnly] is the "1 · Install the core" button, which is the same
+     * instructions minus the step that comes after them - there is no reason
+     * for the two to drift, and someone re-reading the first half should see
+     * the same words they saw the first time.
+     */
+    private fun showSetupGuide(coreOnly: Boolean = false) {
         val target = File(
             Environment.getExternalStorageDirectory(),
             "RetroAIScaler/cores/vbam_shim_libretro_android.so"
         )
-        // Written out where the guide points, so the instruction is true by the
-        // time anyone follows it.
+        // Written out where the instructions point, so they are true by the
+        // time anyone follows them.
         Thread {
             runCatching {
                 target.parentFile?.mkdirs()
@@ -234,11 +242,33 @@ class MainActivity : AppCompatActivity() {
             }.onFailure { Log.w(TAG, "could not stage the shim core", it) }
         }.apply { isDaemon = true }.start()
 
+        val retroArch = getString(R.string.shim_guide_retroarch, target.absolutePath)
         AlertDialog.Builder(this)
-            .setTitle(R.string.shim_guide_title)
-            .setMessage(getString(R.string.shim_guide_body, target.absolutePath))
-            .setPositiveButton(R.string.shim_guide_ok, null)
+            .setTitle(if (coreOnly) R.string.shim_guide_core_title else R.string.shim_guide_title)
+            .setMessage(
+                if (coreOnly) retroArch
+                else retroArch + "\n\n" + getString(R.string.shim_guide_launcher)
+            )
+            .setPositiveButton(R.string.shim_guide_start) { _, _ -> openRetroArch() }
+            .setNegativeButton(R.string.btn_cancel, null)
             .show()
+    }
+
+    /**
+     * Opens the emulator, because the next three steps are all inside it.
+     *
+     * Whichever app is the enhancement target, rather than a hardcoded package:
+     * the same person may be running a differently-packaged RetroArch, and it
+     * is already the one thing this app is pointed at.
+     */
+    private fun openRetroArch() {
+        val pkg = TargetAppPreference.get(this) ?: foregroundMonitor.detectRetroArch()
+        val intent = pkg?.let { packageManager.getLaunchIntentForPackage(it) }
+        if (intent == null) {
+            Toast.makeText(this, R.string.target_app_not_found, Toast.LENGTH_LONG).show()
+            return
+        }
+        startActivity(intent)
     }
 
     /**
