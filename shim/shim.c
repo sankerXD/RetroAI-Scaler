@@ -48,6 +48,11 @@
 #define SHIM_MARKER "_shim"
 #define CONTROL_FILE "/storage/emulated/0/RetroAIScaler/shim/probe.txt"
 
+/* Where RetroArch keeps retroarch.cfg on Android, relative to external
+ * storage. Only used to find libretro_info_path; see install_info_file. */
+#define RA_CFG_FMT "/storage/emulated/0/Android/data/%s/files/retroarch.cfg"
+#define RA_INFO_FALLBACK_FMT "/storage/emulated/0/Android/data/%s/files/info"
+
 /* ---------------------------------------------------------------- real core */
 
 struct core_fns {
@@ -85,6 +90,9 @@ static void            *g_handle;
 static pthread_once_t   g_once = PTHREAD_ONCE_INIT;
 static bool             g_ready;
 static char             g_core_path[PATH_MAX];
+static char             g_self_dir[PATH_MAX];   /* ".../<pkg>/cores/"          */
+static char             g_self_base[256];       /* "vbam_shim_libretro_..."    */
+static char             g_core_base[256];       /* "vbam_libretro_android.so"  */
 
 /* RetroArch's callbacks, kept so the wrappers can forward to them. */
 static retro_environment_t   g_env_cb;
@@ -155,7 +163,184 @@ static bool derive_core_path(void)
         LOGE("derived core path does not fit in PATH_MAX");
         return false;
     }
+
+    if (dir_len >= sizeof(g_self_dir) || strlen(base) >= sizeof(g_self_base))
+        return false;
+    memcpy(g_self_dir, self, dir_len);
+    g_self_dir[dir_len] = '\0';
+    snprintf(g_self_base, sizeof(g_self_base), "%s", base);
+    snprintf(g_core_base, sizeof(g_core_base), "%.*s%s",
+             (int)prefix_len, base, suffix);
     return true;
+}
+
+/*
+ * Give RetroArch a .info file for ourselves, by copying the real core's.
+ *
+ * §5.3 concluded ".info is not needed at all" because RetroArch loads a core
+ * from an absolute path without consulting it. That is true for LOADING and
+ * false for FEATURES: since 1.16 the save-state menu is gated on
+ * savestate_support_level, which comes from the .info file, so a core with no
+ * info entry is treated as not supporting save states and retro_serialize_size
+ * is never even called. Measured on device 2026-08-22 - everything else about
+ * the shim was byte-identical to the real core, and only save states were
+ * refused.
+ *
+ * We cannot write RetroArch's info directory from our own app: it sits under
+ * a path Android 11 puts out of reach, and on this device it is not even on a
+ * volume our app's mount namespace contains. The shim can, because the shim IS
+ * RetroArch as far as the kernel is concerned - same uid, same namespace.
+ *
+ * Two properties this deliberately has:
+ *  - it NEVER overwrites an existing file, so a user who has a real
+ *    vbam_shim_libretro.info keeps it, and a re-entrant call cannot corrupt
+ *    anything;
+ *  - it copies rather than synthesises, so the shim reports exactly what the
+ *    real core reports. Anything RetroArch keys off that file - save states,
+ *    playlist association, firmware lists - then behaves as if the shim were
+ *    the core, which is the whole design goal.
+ *
+ * It takes effect on the NEXT launch: RetroArch builds its info list at
+ * startup, before any core is loaded, so the file we write here is read the
+ * time after. Acceptable - activation already involves installing a core and
+ * rescanning the frontend.
+ */
+static bool read_cfg_string(const char *cfg_path, const char *key,
+                            char *out, size_t out_sz)
+{
+    FILE *f = fopen(cfg_path, "r");
+    if (!f) return false;
+
+    char line[1024];
+    size_t key_len = strlen(key);
+    bool found = false;
+
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, key, key_len) != 0) continue;
+        /* key must be followed by space or '=', not by more identifier - so
+         * that "libretro_info_path" does not match a longer key. */
+        const char *p = line + key_len;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != '=') continue;
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
+
+        char        *dst = out;
+        const char  *end = out + out_sz - 1;
+        bool         quoted = (*p == '"');
+        if (quoted) p++;
+        while (*p && dst < end) {
+            if (quoted && *p == '"') break;
+            if (!quoted && (*p == '\r' || *p == '\n')) break;
+            *dst++ = *p++;
+        }
+        *dst = '\0';
+        /* Unquoted values can still carry trailing whitespace. */
+        while (dst > out && (dst[-1] == ' ' || dst[-1] == '\t' ||
+                             dst[-1] == '\r' || dst[-1] == '\n'))
+            *--dst = '\0';
+        found = (out[0] != '\0');
+        break;
+    }
+
+    fclose(f);
+    return found;
+}
+
+/* "vbam_libretro_android.so" -> "vbam_libretro". RetroArch drops the platform
+ * suffix when it looks for the matching .info. */
+static bool info_stem(const char *so_name, char *out, size_t out_sz)
+{
+    size_t n = strlen(so_name);
+    if (n < 4 || strcmp(so_name + n - 3, ".so") != 0) return false;
+    n -= 3;
+
+    static const char suffix[] = "_android";
+    size_t suffix_len = sizeof(suffix) - 1;
+    if (n > suffix_len && strncmp(so_name + n - suffix_len, suffix, suffix_len) == 0)
+        n -= suffix_len;
+
+    if (n == 0 || n >= out_sz) return false;
+    memcpy(out, so_name, n);
+    out[n] = '\0';
+    return true;
+}
+
+static void install_info_file(const char *self_dir, const char *self_base,
+                              const char *core_base)
+{
+    /* self_dir is ".../<pkg>/cores/". Two levels up is the package directory,
+     * and its basename is the package name RetroArch runs under - derived
+     * rather than hardcoded, so a differently-packaged RetroArch still works. */
+    char pkg_dir[PATH_MAX];
+    size_t dir_len = strlen(self_dir);
+    if (dir_len == 0 || dir_len >= sizeof(pkg_dir)) return;
+    memcpy(pkg_dir, self_dir, dir_len + 1);
+    if (pkg_dir[dir_len - 1] == '/') pkg_dir[dir_len - 1] = '\0';   /* strip / */
+    char *cut = strrchr(pkg_dir, '/');                              /* /cores  */
+    if (!cut) return;
+    *cut = '\0';
+    const char *pkg = strrchr(pkg_dir, '/');
+    if (!pkg) return;
+    pkg++;
+
+    char cfg[PATH_MAX], info_dir[PATH_MAX];
+    snprintf(cfg, sizeof(cfg), RA_CFG_FMT, pkg);
+
+    if (read_cfg_string(cfg, "libretro_info_path", info_dir, sizeof(info_dir))) {
+        LOGI("info dir from %s: %s", cfg, info_dir);
+    } else {
+        snprintf(info_dir, sizeof(info_dir), RA_INFO_FALLBACK_FMT, pkg);
+        LOGI("could not read libretro_info_path from %s, falling back to %s",
+             cfg, info_dir);
+    }
+
+    char core_stem[256], self_stem[256];
+    if (!info_stem(core_base, core_stem, sizeof(core_stem)) ||
+        !info_stem(self_base, self_stem, sizeof(self_stem))) {
+        LOGE("cannot derive .info names from '%s' / '%s'", core_base, self_base);
+        return;
+    }
+
+    char src[PATH_MAX], dst[PATH_MAX];
+    snprintf(src, sizeof(src), "%s/%s.info", info_dir, core_stem);
+    snprintf(dst, sizeof(dst), "%s/%s.info", info_dir, self_stem);
+
+    FILE *out = fopen(dst, "r");
+    if (out) {
+        fclose(out);
+        LOGI("%s already exists, leaving it alone", dst);
+        return;
+    }
+
+    FILE *in = fopen(src, "r");
+    if (!in) {
+        LOGE("cannot read %s - RetroArch will keep treating the shim as a core "
+             "with no info, which is what disables save states", src);
+        return;
+    }
+
+    out = fopen(dst, "w");
+    if (!out) {
+        LOGE("cannot write %s", dst);
+        fclose(in);
+        return;
+    }
+
+    char   buf[4096];
+    size_t n, total = 0;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) {
+            LOGE("short write to %s", dst);
+            break;
+        }
+        total += n;
+    }
+    fclose(in);
+    fclose(out);
+    LOGI("wrote %s (%zu bytes copied from %s) - save states need one more "
+         "launch, RetroArch builds its info list before loading any core",
+         dst, total, src);
 }
 
 #define SYM(field, name)                                                       \
@@ -231,6 +416,10 @@ static void load_once(void)
 
     g_ready = true;
     LOGI("real core loaded and all 25 entry points resolved");
+
+    /* After the core is known to be good, so a failure here can never be
+     * confused with a failure to load. Purely additive and idempotent. */
+    install_info_file(g_self_dir, g_self_base, g_core_base);
 }
 
 /*
