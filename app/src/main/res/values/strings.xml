@@ -234,7 +234,9 @@
     <string name="shim_status_none">Not set up yet — press “How to set it up”</string>
     <string name="toast_launch_restored">Put %1$d launch entries back. Reload the library in your frontend.</string>
     <string name="shim_guide_title">One-time setup</string>
-    <string name="shim_guide_body">1. Open RetroArch\n2. Load Core → Install or Restore a Core\n3. Pick the file at:\n%1$s\n\nThat is all. Come back here when it is done.\n\nIf a game ever fails to start afterwards, press “Undo all changes”.</string>
+    <string name="shim_guide_body">1. Open RetroArch\n2. Load Core → Install or Restore a Core\n3. Pick the file at:\n%1$s\n4. Come back here — you will be told to reload your library\n5. Play one game, then open this app again\n\nStep 5 covers the rest of your consoles in one go. After that this is done for good.\n\nIf a game ever fails to start, press “Undo all changes”.</string>
+    <string name="reload_notice_title">Reload your library</string>
+    <string name="reload_notice_body">%1$d launch entries were updated, and they will not take effect until your frontend looks at them again.\n\nIn Pegasus: Settings → Reload.\n\nRestarting the frontend is not enough — it only rescans when told to.</string>
     <string name="shim_guide_ok">Got it</string>
     <string name="shim_guide_body_restore">Every launch entry goes back to the emulator core it named before. Games keep working either way — this just turns the enhancement off at the source.\n\nReload the library in your frontend afterwards.</string>
     <string name="shim_link_stop">Disconnect</string>

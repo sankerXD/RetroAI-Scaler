@@ -237,6 +237,31 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Says that the frontend has to be reloaded, at the moment it becomes true.
+     *
+     * The frontend most people here run is a fork of Pegasus that replaced
+     * "rescan at every startup" with a static scan, to save five seconds of
+     * startup. Nothing we write under Roms takes effect until it is told to
+     * look again, and restarting it is not enough - the scan is persisted.
+     *
+     * Without this the app would quietly rewrite launch entries, report every
+     * console as set up, and the player would launch a game and get no
+     * enhancement at all with nothing anywhere saying why. That exact failure
+     * cost a day of debugging on this side; it must not be shipped pointing at
+     * the player.
+     *
+     * Shown when something actually changed, which after the first run is
+     * never - so this is twice in the life of an install, not a nag.
+     */
+    private fun showReloadNotice(changed: Int) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.reload_notice_title)
+            .setMessage(getString(R.string.reload_notice_body, changed))
+            .setPositiveButton(R.string.shim_guide_ok, null)
+            .show()
+    }
+
     private fun confirmRestoreLaunchFiles() {
         AlertDialog.Builder(this)
             .setTitle(R.string.shim_restore)
@@ -554,10 +579,16 @@ class MainActivity : AppCompatActivity() {
                 Log.i(TAG, "launch sync: ${scan.cores.size} cores known, ${result.message}")
                 runOnUiThread {
                     updateShimProbeUi()
-                    // Nothing set up means nothing works yet, and a button
-                    // someone has to notice is a worse way to say so than
-                    // simply saying it.
-                    if (shimConvertedCount == 0 && !isFinishing) showSetupGuide()
+                    if (isFinishing) return@runOnUiThread
+                    when {
+                        // Nothing set up means nothing works yet, and a button
+                        // someone has to notice is a worse way to say so than
+                        // simply saying it.
+                        shimConvertedCount == 0 -> showSetupGuide()
+                        // Something changed just now, so the frontend is
+                        // holding a stale scan and nothing we did is live yet.
+                        result.changed > 0 -> showReloadNotice(result.changed)
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "syncing the launch files failed", e)
@@ -573,12 +604,8 @@ class MainActivity : AppCompatActivity() {
             shimConvertedCount = 0
             Log.i(TAG, "launch restore: ${result.message}")
             runOnUiThread {
-                Toast.makeText(
-                    this,
-                    getString(R.string.toast_launch_restored, result.changed),
-                    Toast.LENGTH_LONG
-                ).show()
                 updateShimProbeUi()
+                if (!isFinishing) showReloadNotice(result.changed)
             }
         }.apply { name = "LaunchRestore"; isDaemon = true }.start()
     }

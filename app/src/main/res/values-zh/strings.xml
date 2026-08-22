@@ -192,7 +192,9 @@
     <string name="shim_status_none">还没设置——点【怎么设置】</string>
     <string name="toast_launch_restored">已还原 %1$d 条启动项。请在前端里重新加载一次游戏库。</string>
     <string name="shim_guide_title">一次性设置</string>
-    <string name="shim_guide_body">1. 打开 RetroArch\n2. 加载核心 → 安装和还原核心\n3. 选这个文件：\n%1$s\n\n就这些，完成后回到这里。\n\n万一之后有游戏打不开，点【撤销所有改动】。</string>
+    <string name="shim_guide_body">1. 打开 RetroArch\n2. 加载核心 → 安装和还原核心\n3. 选这个文件：\n%1$s\n4. 回到这里，会提示你重新加载游戏库\n5. 玩一次游戏，然后再打开一次本 APP\n\n第 5 步会把其余机种一次性搞定，之后就再也不用管了。\n\n万一有游戏打不开，点【撤销所有改动】。</string>
+    <string name="reload_notice_title">需要重新加载游戏库</string>
+    <string name="reload_notice_body">已更新 %1$d 条启动项，但在前端重新扫描之前不会生效。\n\n天马G：设置 → 重新加载。\n\n重启前端没用——它只在你让它扫描时才扫描。</string>
     <string name="shim_guide_ok">知道了</string>
     <string name="shim_guide_body_restore">所有启动项都会改回原来的模拟器核心。两种状态下游戏都能正常玩，这一步只是从源头关掉增强。\n\n之后请在前端里重新加载一次游戏库。</string>
     <string name="shim_link_stop">断开连接</string>
