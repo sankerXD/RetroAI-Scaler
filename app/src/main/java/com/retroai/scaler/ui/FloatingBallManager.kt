@@ -970,6 +970,37 @@ class FloatingBallManager(
                     val detected = android.graphics.Rect(
                         rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]
                     )
+                    /*
+                     * A window covering the whole screen is not a capture
+                     * window - it is RetroArch drawing full screen because the
+                     * viewport override has not taken effect.
+                     *
+                     * §10.2's aspect-ratio gate rejects the menu case, and
+                     * cannot reject this one: a 4:3 console on a 4:3 panel is
+                     * an exact integer multiple of itself at full screen, so
+                     * 1280x960 reads as a perfectly good 4x PlayStation window.
+                     * Accepting it sets source equal to output, and with
+                     * protect on, the entire output is discarded - the enhancer
+                     * draws nothing at all and the screen shows RetroArch's own
+                     * picture, with no error anywhere saying why.
+                     *
+                     * Refusing says which of the two actually went wrong.
+                     */
+                    val screenArea = screenWidth.toLong() * screenHeight
+                    if (detected.width().toLong() * detected.height() > screenArea * 9 / 10) {
+                        Log.w(TAG, "detected ${detected.width()}x${detected.height()}" +
+                            " - that is the whole screen, so RetroArch is not in" +
+                            " its viewport; refusing it")
+                        restoreOwnWindowsAfterDetection(ballWasVisible, menuWasVisible)
+                        if (!silent) {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.toast_detect_fullscreen),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        return
+                    }
                     profile.detectedSourceRect = detected
                     applyRenderProfile()
                     restoreOwnWindowsAfterDetection(ballWasVisible, menuWasVisible)

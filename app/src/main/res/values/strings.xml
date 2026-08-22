@@ -120,6 +120,7 @@
     <string name="toast_config_written">%1$s\nRestart RetroArch, then run “Locate the game picture” again</string>
     <string name="toast_detecting">Locating the game picture…</string>
     <string name="toast_detect_locked">Locked on: %1$d×%2$d @ (%3$d, %4$d)</string>
+    <string name="toast_detect_fullscreen">RetroArch is still drawing full screen, so its new layout has not been applied. Close RetroArch and start the game again.</string>
     <string name="toast_detect_failed">No game picture found. Check that the game is showing and is not a black screen</string>
     <string name="toast_corner_restored">Back to the corner-based capture window</string>
 

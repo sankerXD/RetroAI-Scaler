@@ -99,6 +99,7 @@
     <string name="toast_config_written">%1$s\n重启 RA 后请重新【自动探测】</string>
     <string name="toast_detecting">正在探测游戏画面位置…</string>
     <string name="toast_detect_locked">已锁定画面: %1$d×%2$d @ (%3$d, %4$d)</string>
+    <string name="toast_detect_fullscreen">RetroArch 仍在全屏绘制，说明新的画面布局还没生效。请关闭 RetroArch 并重新启动游戏。</string>
     <string name="toast_detect_failed">没找到游戏画面。确认游戏正在显示、且不是全黑画面</string>
     <string name="toast_corner_restored">已改回按角落计算的取景窗</string>
 
