@@ -273,7 +273,18 @@ class ShimFrameService : Service() {
         var payload = ByteArray(0)
         var windowStart = SystemClock.elapsedRealtime()
         var windowFrames = 0
-        val firstFrameAt = AtomicLong(0)
+        /* A ring of recent one-second windows, not a session average.
+         *
+         * The session average was polluted the first time it was read: the
+         * tester fast-forwarded past an intro, retro_run ran flat out, and the
+         * mean came back 263fps for a 59.7275fps core. The rate here changes
+         * legitimately - fast-forward, pause, menus - so any statistic that
+         * remembers the whole run reports a number that was never true at any
+         * moment. Ten windows is long enough to settle the one-frame jitter
+         * that made a single window read 60.76, and short enough to forget a
+         * mode the player has left. */
+        val recent = DoubleArray(10)
+        var recentCount = 0
 
         while (!stopping) {
             input.readFully(header)
@@ -300,19 +311,16 @@ class ShimFrameService : Service() {
 
             windowFrames++
             val now = SystemClock.elapsedRealtime()
-            if (firstFrameAt.get() == 0L) firstFrameAt.set(now)
             val elapsed = now - windowStart
             if (elapsed >= 1000) {
-                measuredFps = windowFrames * 1000.0 / elapsed
+                val fps = windowFrames * 1000.0 / elapsed
+                measuredFps = fps
+                recent[recentCount % recent.size] = fps
+                recentCount++
+                val n = minOf(recentCount, recent.size)
+                averageFps = (0 until n).sumOf { recent[it] } / n
                 windowStart = now
                 windowFrames = 0
-                /* A one-second window is too coarse to tell 59.7275 from 60 -
-                 * a single frame landing either side of the boundary moves it
-                 * by a whole fps, which is why the first run read 60.76. The
-                 * session average settles, and settling on the core's real
-                 * rate is the actual gate criterion. */
-                val span = now - firstFrameAt.get()
-                if (span > 0) averageFps = (framesReceived.get() - 1) * 1000.0 / span
             }
 
             if (dumpRequested.compareAndSet(true, false)) {
