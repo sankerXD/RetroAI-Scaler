@@ -300,10 +300,9 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                     ),
                     Toast.LENGTH_LONG
                 ).show()
-                // "The AI engine has stopped" has to be true of everything,
-                // not just this service: the link service's own notification
-                // would otherwise sit there saying it is waiting.
-                stopService(Intent(this@OverlayService, ShimFrameService::class.java))
+                // The link service goes with it - "AI enhancement has stopped"
+                // has to be true of everything - but that is onDestroy's job
+                // now, for every exit rather than this one.
                 stopSelf()
                 return
             }
@@ -625,14 +624,10 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      */
     private fun endCaptureSession() {
         frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() }
-        // The screen-recording card describes a live situation. This is the end
-        // of that situation, so the card goes with it; meeting such a core
-        // again is what brings it back.
-        HardwareCoreNotice.forget()
-        // The link service was kept alive purely as the emulator's heartbeat.
-        // Leaving it running would leave its "waiting for the emulator"
-        // notification sitting there after everything else has stopped.
-        stopService(Intent(this, ShimFrameService::class.java))
+        // Everything else a finished session has to clean up is in onDestroy,
+        // because this is only ONE of the four ways it can finish - the
+        // floating menu, the notification's Stop and the watchdog all call
+        // stopSelf() straight and would miss anything left here.
         stopSelf()
     }
 
@@ -1639,6 +1634,30 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
     override fun onDestroy() {
         restoreConfigOnStop()
+
+        /*
+         * A capture session is over here, however it got here.
+         *
+         * These two used to live in endCaptureSession(), which is only the
+         * route where the emulator exits. Stop from the floating menu, from the
+         * notification, or from the watchdog and they were skipped: the session
+         * was gone, RetroArch was closed, and the special-mode card was still
+         * on the main screen offering screen recording for a game that had
+         * finished - which is what was reported. Cleanup belongs on the path
+         * every exit takes, not on the tidiest one.
+         *
+         * `!shimMode` matters: the notice is SET by the direct-mode watchdog
+         * meeting a GPU core, and that watchdog stops the service one line
+         * later. Clearing it here unconditionally would erase the notice at the
+         * exact moment it was raised, and the card would never appear at all.
+         */
+        if (!shimMode) HardwareCoreNotice.forget()
+        // The link service outlives nothing here: in direct mode it is the
+        // frame source with no consumer left, and in capture mode it was only
+        // ever the emulator's heartbeat. Either way its "waiting for the
+        // emulator" notification must not sit there after everything stopped.
+        stopService(Intent(this, ShimFrameService::class.java))
+
         mainHandler.removeCallbacks(watchdogRunnable)
         mainHandler.removeCallbacks(foregroundPollRunnable)
         mainHandler.removeCallbacks(autoDetectRunnable)
