@@ -6,7 +6,7 @@ points. Because RetroArch loads it voluntarily there is no injection involved:
 no root, no ptrace, no platform signature, and it behaves the same on every
 Android version.
 
-Its reason to exist is in `NewSolution.md` §1: with MediaProjection the only
+Its reason to exist is in AGENT.md §17.1: with MediaProjection the only
 frame source, RetroArch's own picture and the enhanced picture must occupy
 different parts of one screen, and on a 3.5" panel that cost is not payable.
 Frames taken here never reach the screen compositor at all, so the overlay can
@@ -65,7 +65,7 @@ launch line is one token, so undoing all of this is one token too.
 Gate 2 is a pure pass-through: no IPC, no frame publishing. It answers three
 questions and no others — does RetroArch accept the `.so`, does the real core
 load, does the game play identically. Frames go to the app in gate 3 over a
-loopback TCP socket (`NewSolution.md` §4.4, measured in gate 1).
+loopback TCP socket (AGENT.md §17.4, measured on the device).
 
 ## Provenance
 

@@ -7,7 +7,7 @@ package com.retroai.scaler.capture
  * [CaptureBridge] mirrors the screen through MediaProjection. That is the only
  * route for cores that render on the GPU, because such a core hands libretro a
  * sentinel instead of pixels and there is nothing for the shim to take
- * (NewSolution.md §9).
+ * (AGENT.md §17.6).
  *
  * [com.retroai.scaler.shim.ShimFrameSource] takes the emulator core's own
  * frame buffer from inside RetroArch, before the screen compositor sees it. It

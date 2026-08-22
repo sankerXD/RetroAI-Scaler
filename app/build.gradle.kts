@@ -19,8 +19,8 @@ android {
         // already at 2 from an icon change. It deliberately does NOT track
         // versionName - resetting it to 1 for the 1.0 release would be a
         // downgrade to anything already installed.
-        versionCode = 2
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         

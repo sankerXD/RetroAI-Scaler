@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Gate 3 (NewSolution.md §7): receive the shim's frames and prove they are the
+ * Receive the shim's frames and prove they are the
  * same picture RetroArch draws.
  *
  * This deliberately does NOT render. Gate 3 answers three questions - is the

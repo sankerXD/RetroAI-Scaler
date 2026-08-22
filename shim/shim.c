@@ -1,5 +1,5 @@
 /*
- * RetroAI shim core - gate 2 (NewSolution.md §7).
+ * RetroAI shim core. See AGENT.md §17.
  *
  * A libretro core that is not a core. RetroArch loads this .so, and it dlopens
  * the real core beside it and forwards all 25 entry points. Because RetroArch
@@ -45,7 +45,7 @@
 
 /* Bumped when the shim/app protocol changes. Exported so that a future
  * take-over scheme can dlopen a file and ask "are you already me?" before
- * overwriting it - see NewSolution.md §10 ①. */
+ * overwriting it - see AGENT.md §17.12. */
 #define RETROAI_SHIM_MAGIC 0x52414931u /* "RAI1" */
 
 #define SHIM_MARKER "_shim"
