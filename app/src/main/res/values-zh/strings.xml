@@ -191,6 +191,9 @@
     <string name="shim_apply">2 · 覆盖天马G配置</string>
     <string name="shim_restore">撤销</string>
     <string name="toast_nothing_to_apply">没有需要覆盖的——已安装的核心，配置里都已经指向它们了。</string>
+    <string name="special_mode_title">特殊模式</string>
+    <string name="special_mode_desc">这个平台是 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效。</string>
+    <string name="special_mode_desc_console">%1$s 是 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效。</string>
     <string name="shim_use_capture">录屏模式</string>
     <string name="shim_status">%1$d / %2$d 个机种已设置</string>
     <string name="shim_status_none">还没设置——点【怎么设置】</string>

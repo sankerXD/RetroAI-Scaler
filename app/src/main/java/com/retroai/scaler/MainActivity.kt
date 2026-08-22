@@ -19,7 +19,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.retroai.scaler.detector.ForegroundAppMonitor
-import com.retroai.scaler.detector.CaptureModePreference
+import com.retroai.scaler.detector.HardwareCoreNotice
 import com.retroai.scaler.detector.PegasusConfigManager
 import com.retroai.scaler.detector.RetroArchBackupManager
 import com.retroai.scaler.detector.RetroArchConfigManager
@@ -61,6 +61,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnShimCapture: Button
     private lateinit var cardPermissions: View
     private lateinit var cardSetup: View
+    private lateinit var cardSpecial: View
+    private lateinit var rowSetupButtons: View
+    private lateinit var tvSpecialMode: TextView
 
     /** Filled in by syncLaunchFiles, read by the status line. */
     @Volatile private var shimCoreCount = 0
@@ -215,6 +218,7 @@ class MainActivity : AppCompatActivity() {
         cardPermissions = findViewById(R.id.cardPermissions)
         cardSetup = findViewById(R.id.cardSetup)
 
+        rowSetupButtons = findViewById(R.id.rowSetupButtons)
         btnShimProbe = findViewById(R.id.btnShimProbe)
         btnShimDump = findViewById(R.id.btnShimDump)
         btnShimStart = findViewById(R.id.btnShimStart)
@@ -222,6 +226,8 @@ class MainActivity : AppCompatActivity() {
         btnShimProbe.setOnClickListener { showSetupGuide(coreOnly = true) }
         btnShimStart.setOnClickListener { applyLaunchFiles() }
         btnShimDump.setOnClickListener { confirmRestoreLaunchFiles() }
+        cardSpecial = findViewById(R.id.cardSpecial)
+        tvSpecialMode = findViewById(R.id.tvSpecialMode)
         btnShimCapture = findViewById(R.id.btnShimCapture)
         btnShimCapture.setOnClickListener { requestStartCapturePipeline() }
     }
@@ -330,7 +336,7 @@ class MainActivity : AppCompatActivity() {
         // later, so the name is persisted alongside the flag that put the
         // button on screen in the first place.
         val core = ShimFrameService.coreFile
-            ?: CaptureModePreference.hardwareCoreFile(this)
+            ?: HardwareCoreNotice.coreFile()
             ?: return
         if (core == lastPreselectedCore) return
         lastPreselectedCore = core
@@ -353,24 +359,31 @@ class MainActivity : AppCompatActivity() {
     /** The link runs on its own threads, so the only way this Activity learns
      *  anything about it is to look. */
     private fun updateShimProbeUi() {
-        // Only offered when it is the answer to something: a core that draws
-        // on the GPU is the one case direct mode cannot serve.
         /*
-         * A GPU-rendering core is the one case direct mode cannot serve, and
-         * the only case where any of this needs to be visible.
+         * The special-mode card exists exactly as long as the situation does.
          *
-         * The console card comes back with the button. Screen capture computes
-         * RetroArch's viewport from the declared console, so it cannot work
-         * without one - and hiding the picker for direct mode quietly took
-         * away the only way to configure the route it was falling back to. The
-         * symptom was a PlayStation drawn to the previous console's dimensions,
-         * with the capture window landing in the middle of the picture.
+         * Screen recording is not a mode to choose between, it is the answer to
+         * one thing: a core that renders on the GPU, which the direct frame
+         * source cannot see into. So it gets its own card rather than a fourth
+         * button in the setup row, and that card is absent until such a core is
+         * actually met - and gone again the moment the session for it ends or
+         * the app is restarted (see HardwareCoreNotice).
          */
-        // Remembered rather than live: the service that saw the GPU core has
-        // stopped by the time anyone gets here to press this.
-        val needsCapture = CaptureModePreference.sawHardwareCore(this)
-        btnShimCapture.visibility = if (needsCapture) View.VISIBLE else View.GONE
-        if (needsCapture) preselectConsoleFromCore()
+        val needsCapture = HardwareCoreNotice.pending()
+        cardSpecial.visibility = if (needsCapture) View.VISIBLE else View.GONE
+        if (needsCapture) {
+            preselectConsoleFromCore()
+            // Name the platform. "Some core renders on the GPU" is a fact about
+            // our implementation; "PlayStation cannot be read directly" is a
+            // fact about the thing they were just playing.
+            val console = (ShimFrameService.coreFile ?: HardwareCoreNotice.coreFile())
+                ?.let { consoleForCore(it) }
+            tvSpecialMode.text = if (console != null) {
+                getString(R.string.special_mode_desc_console, console.label(this))
+            } else {
+                getString(R.string.special_mode_desc)
+            }
+        }
 
         /*
          * Setup is a thing you do once, so it stops being a thing you look at.
@@ -381,6 +394,7 @@ class MainActivity : AppCompatActivity() {
          * - only a line saying so, and the way back out.
          */
         val done = shimConvertedCount > 0
+        rowSetupButtons.visibility = if (done) View.GONE else View.VISIBLE
         btnShimProbe.visibility = if (done) View.GONE else View.VISIBLE
         btnShimStart.visibility = if (done) View.GONE else View.VISIBLE
 

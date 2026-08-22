@@ -31,7 +31,7 @@ import com.retroai.scaler.capture.CaptureBridge
 import com.retroai.scaler.capture.FrameSource
 import com.retroai.scaler.shim.ShimFrameService
 import com.retroai.scaler.shim.ShimFrameSource
-import com.retroai.scaler.detector.CaptureModePreference
+import com.retroai.scaler.detector.HardwareCoreNotice
 import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
@@ -252,10 +252,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 // With the core's name: the capture route configures RetroArch
                 // for whatever console THIS core is, and by the time the player
                 // presses the button the static holding it may be gone.
-                CaptureModePreference.rememberHardwareCore(
-                    this@OverlayService,
-                    ShimFrameService.coreFile
-                )
+                HardwareCoreNotice.remember(ShimFrameService.coreFile)
                 // On the source's own thread, while it still exists: after
                 // stopSelf there is nowhere left to run it and the last frame
                 // stays on the glass (AGENT.md §10.3b).
@@ -483,7 +480,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
          * viewport written into the wrong console's config is damage that
          * outlives it.
          */
-        val core = ShimFrameService.coreFile ?: CaptureModePreference.hardwareCoreFile(this)
+        val core = ShimFrameService.coreFile ?: HardwareCoreNotice.coreFile()
         val console = core?.let { consoleForCore(it) }
         if (console == null) {
             Log.w(TAG, "not writing RetroArch's viewport: core=$core maps to no console")
@@ -536,6 +533,33 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     }
 
     /**
+     * True once the emulator has actually been on screen in this capture
+     * session. Until then "not in the foreground" means the player is still on
+     * their way there - our own settings screen, the consent dialog, the
+     * frontend - and is not a session ending.
+     */
+    private var targetWasInForeground = false
+
+    /**
+     * Ends a capture session: wipe, drop the notice, stop.
+     *
+     * The wipe has to run on the frame source's own thread while that thread
+     * still exists - it owns the EGL context, and ensureEglContextCurrent()
+     * fails silently anywhere else, which leaves the last frame frozen on the
+     * glass over whatever is really on screen (AGENT.md §10.3b, three times
+     * now). Everything else - restoring RetroArch's config, tearing down the
+     * projection - happens in onDestroy.
+     */
+    private fun endCaptureSession() {
+        frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() }
+        // The screen-recording card describes a live situation. This is the end
+        // of that situation, so the card goes with it; meeting such a core
+        // again is what brings it back.
+        HardwareCoreNotice.forget()
+        stopSelf()
+    }
+
+    /**
      * Renders only while [targetPackage] is the foreground app. Without usage
      * access there is no way to know, so painting stays on - degraded, but the
      * user still gets the feature they asked for.
@@ -549,6 +573,40 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             target == null -> true
             else -> monitor.currentForegroundPackage() == target
         }
+
+        /*
+         * A capture session belongs to one launch of one game, and ends with
+         * it.
+         *
+         * Direct mode is the opposite: the emulator leaving is nothing, the
+         * player is checking something and will be back, and tearing the
+         * pipeline down would make switching apps cost a restart. So it pauses,
+         * which is what this whole method is for.
+         *
+         * Capture cannot afford the same generosity. The emulator quitting
+         * (select+B) leaves a session configured for the console that just
+         * ended: RetroArch's viewport override written for it, our sampling
+         * rect predicted for its resolution, a projection still mirroring the
+         * screen. Launch anything else from the frontend and it resumes on the
+         * spot - the reported symptom was the enhanced picture with a small
+         * slab of raw RetroArch magnified into the middle of it, because we
+         * were still sampling a PlayStation-sized rect out of a Game Boy
+         * Advance's full-screen picture.
+         *
+         * Ending it here is also what puts RetroArch's config back and takes
+         * the screen-recording card off the main screen, both of which are
+         * only true once the session is over.
+         */
+        if (!shimMode) {
+            if (shouldRender) {
+                targetWasInForeground = true
+            } else if (targetWasInForeground) {
+                Log.i(TAG, "capture: the emulator is gone - ending the session")
+                endCaptureSession()
+                return
+            }
+        }
+
         if (shouldRender == isRenderingActive) return
 
         isRenderingActive = shouldRender
@@ -1149,7 +1207,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 // profile, the renderer config, the geometry - belongs to the
                 // main thread.
                 mainHandler.post {
-                    CaptureModePreference.forgetHardwareCore(this)
+                    HardwareCoreNotice.forget()
                     val adopted = floatingBallManager
                         ?.adoptNativeSize(w, h, ShimFrameService.coreFile)
                     if (adopted == true) pushGeometry()

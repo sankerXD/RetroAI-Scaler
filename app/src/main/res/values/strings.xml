@@ -233,6 +233,9 @@
     <string name="shim_apply">2 · Update the launcher</string>
     <string name="shim_restore">Undo</string>
     <string name="toast_nothing_to_apply">Nothing to update — the launcher already points at every core that is installed.</string>
+    <string name="special_mode_title">Special mode</string>
+    <string name="special_mode_desc">This platform is drawn on the GPU, so its picture cannot be read from inside the emulator. Screen recording works for it.</string>
+    <string name="special_mode_desc_console">%1$s is drawn on the GPU, so its picture cannot be read from inside the emulator. Screen recording works for it.</string>
     <string name="shim_use_capture">Screen recording</string>
     <string name="shim_status">%1$d of %2$d consoles are set up</string>
     <string name="shim_status_none">Not set up yet — press “How to set it up”</string>

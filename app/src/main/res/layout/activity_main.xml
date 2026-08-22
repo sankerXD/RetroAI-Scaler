@@ -106,7 +106,11 @@
                     android:textStyle="bold" />
 
 
+                <!-- Hidden as a row once setup is done: two gone buttons still
+                     leave their margin behind, as a gap above the status line
+                     with nothing in it. -->
                 <LinearLayout
+                    android:id="@+id/rowSetupButtons"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
@@ -131,41 +135,100 @@
                         android:textColor="@color/primary"
                         android:textSize="12sp" />
 
+                </LinearLayout>
+
+                <!--
+                    The state and the way to undo it, on one line.
+
+                    Once setup is done the two buttons above are gone and this
+                    row is the entire card: a sentence saying where things
+                    stand, and the one control that still applies, at the far
+                    end of it. Stacked, they read as two unrelated things.
+                -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvShimProbe"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="monospace"
+                        android:text="@string/shim_link_idle"
+                        android:textColor="@color/text_secondary"
+                        android:textIsSelectable="true"
+                        android:textSize="10sp" />
+
                     <Button
                         android:id="@+id/btnShimDump"
                         style="@style/Widget.MaterialComponents.Button.TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
                         android:layout_marginStart="8dp"
+                        android:minWidth="0dp"
                         android:text="@string/shim_restore"
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp" />
-
-                    <!-- Only shown when a GPU-rendering core makes it the
-                         answer; see updateShimProbeUi. -->
-                    <Button
-                        android:id="@+id/btnShimCapture"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/shim_use_capture"
-                        android:textColor="@color/accent_orange"
-                        android:textSize="12sp"
-                        android:visibility="gone"
-                        app:strokeColor="@color/accent_orange" />
                 </LinearLayout>
+            </LinearLayout>
+
+            <!--
+                Special modes. Absent unless something has made one necessary.
+
+                Screen recording is not a setting, it is the answer to one
+                situation: a core that renders on the GPU, which the direct
+                frame source cannot see into. Living in the setup card it read
+                as a third option to weigh up during setup, when it is neither
+                a choice nor part of setup - and it stayed on screen forever
+                afterwards, offering itself for consoles that have no use for
+                it.
+
+                The card exists exactly as long as the fact that produced it,
+                which is held in memory and dies with the process - so
+                restarting the app clears it, and meeting such a core again
+                brings it straight back.
+            -->
+            <LinearLayout
+                android:id="@+id/cardSpecial"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:visibility="gone">
 
                 <TextView
-                    android:id="@+id/tvShimProbe"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/special_mode_title"
+                    android:textColor="@color/accent_orange"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvSpecialMode"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:fontFamily="monospace"
-                    android:text="@string/shim_link_idle"
+                    android:text="@string/special_mode_desc"
                     android:textColor="@color/text_secondary"
-                    android:textIsSelectable="true"
-                    android:textSize="10sp" />
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btnShimCapture"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/shim_use_capture"
+                    android:textColor="@color/accent_orange"
+                    android:textSize="12sp"
+                    app:strokeColor="@color/accent_orange" />
             </LinearLayout>
             <!--
                 Console Card. Hidden in direct mode, where the frames carry
