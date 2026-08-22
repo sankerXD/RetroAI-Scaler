@@ -218,9 +218,11 @@
       Delete along with ShimProbeService.kt once the gate is answered. The
       transcript itself is deliberately untranslated: it is a diagnostic log.
     -->
-    <string name="shim_probe_title">Gate 1 · IPC probe (temporary)</string>
-    <string name="shim_probe_hint">Starts a loopback listener on 127.0.0.1:55435, then have RetroArch connect to it: Netplay → Connect to Netplay Host → 127.0.0.1. One accepted connection answers the gate.</string>
-    <string name="shim_probe_start">Start probe</string>
-    <string name="shim_probe_stop">Stop probe</string>
-    <string name="shim_probe_idle">Not running.</string>
+    <string name="shim_link_title">Shim frame link (gate 3)</string>
+    <string name="shim_link_hint">Listens on loopback for frames from the libretro shim inside RetroArch, and publishes the port to RetroAIScaler/shim/link.txt. Counts and measures only — nothing is rendered yet.</string>
+    <string name="shim_link_start">Start frame link</string>
+    <string name="shim_link_stop">Stop frame link</string>
+    <string name="shim_link_dump">Dump next frame</string>
+    <string name="shim_link_idle">Not running.</string>
+    <string name="shim_link_notification">Waiting for frames on loopback</string>
 </resources>

@@ -23,7 +23,7 @@ import com.retroai.scaler.ui.ConsoleType
 import com.retroai.scaler.ui.LocaleHelper
 import com.retroai.scaler.ui.ProfilePreference
 import com.retroai.scaler.service.OverlayService
-import com.retroai.scaler.shim.ShimProbeService
+import com.retroai.scaler.shim.ShimFrameService
 
 class MainActivity : AppCompatActivity() {
 
@@ -44,8 +44,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPickTargetApp: Button
     private lateinit var btnPickLanguage: Button
 
-    // TEMPORARY - gate 1 of the libretro shim route.
+    // Shim frame link (gate 3). Developer tooling until gate 4 makes it the
+    // ordinary frame source.
     private lateinit var btnShimProbe: Button
+    private lateinit var btnShimDump: Button
     private lateinit var tvShimProbe: TextView
 
     private val foregroundMonitor by lazy { ForegroundAppMonitor(this) }
@@ -179,14 +181,19 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // TEMPORARY - gate 1 of the libretro shim route. Remove with
-        // ShimProbeService.kt and its card in activity_main.xml.
         btnShimProbe = findViewById(R.id.btnShimProbe)
+        btnShimDump = findViewById(R.id.btnShimDump)
         tvShimProbe = findViewById(R.id.tvShimProbe)
         btnShimProbe.setOnClickListener {
-            val intent = Intent(this, ShimProbeService::class.java)
-            if (ShimProbeService.isRunning) stopService(intent)
+            val intent = Intent(this, ShimFrameService::class.java)
+            if (ShimFrameService.isRunning) stopService(intent)
             else ContextCompat.startForegroundService(this, intent)
+        }
+        btnShimDump.setOnClickListener {
+            // Arms the receiver; the next frame to arrive is written out. Doing
+            // it this way rather than dumping "the current frame" means the
+            // file is always a whole frame that was never half-overwritten.
+            ShimFrameService.dumpRequested.set(true)
         }
     }
 
@@ -200,22 +207,42 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** TEMPORARY - gate 1. The probe's transcript is written from its own
-     *  threads, so the only way this Activity learns about it is to look. */
+    /** The link runs on its own threads, so the only way this Activity learns
+     *  anything about it is to look. */
     private fun updateShimProbeUi() {
         btnShimProbe.setText(
-            if (ShimProbeService.isRunning) R.string.shim_probe_stop
-            else R.string.shim_probe_start
+            if (ShimFrameService.isRunning) R.string.shim_link_stop
+            else R.string.shim_link_start
         )
-        val lines = ShimProbeService.transcript
-        tvShimProbe.text = if (lines.isEmpty()) {
-            getString(R.string.shim_probe_idle)
-        } else {
-            val accepted = ShimProbeService.acceptedCount.get()
-            val verdict = if (accepted > 0) "VERDICT: loopback works, accepted=$accepted"
-            else "VERDICT: pending - no connection yet"
-            (lines.takeLast(24) + verdict).joinToString("\n")
+        btnShimDump.isEnabled = ShimFrameService.connected
+
+        val lines = ShimFrameService.transcript
+        if (lines.isEmpty()) {
+            tvShimProbe.text = getString(R.string.shim_link_idle)
+            return
         }
+
+        val frames = ShimFrameService.framesReceived.get()
+        val format = when (ShimFrameService.lastFormat) {
+            0 -> "0RGB1555"
+            1 -> "XRGB8888"
+            2 -> "RGB565"
+            else -> "-"
+        }
+        val mib = ShimFrameService.bytesReceived.get() / (1024.0 * 1024.0)
+        val stats = buildString {
+            append(if (ShimFrameService.connected) "link UP" else "link down")
+            append("  frames=").append(frames)
+            append("  %.2f fps".format(ShimFrameService.measuredFps))
+            append("\n")
+            append(ShimFrameService.lastWidth).append("x").append(ShimFrameService.lastHeight)
+            append("  pitch=").append(ShimFrameService.lastPitch)
+            append("  ").append(format)
+            append("  rot=").append(ShimFrameService.lastRotation)
+            append("  %.1f MiB".format(mib))
+            ShimFrameService.lastDumpPath?.let { append("\ndumped ").append(it) }
+        }
+        tvShimProbe.text = (lines.takeLast(10) + stats).joinToString("\n")
     }
 
     override fun onResume() {

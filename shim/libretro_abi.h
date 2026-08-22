@@ -46,7 +46,7 @@ extern "C" {
  * which is our process too. */
 #define RETRO_HW_FRAME_BUFFER_VALID ((void *)-1)
 
-/* Logging only - never branched on for behaviour in gate 2. */
+#define RETRO_ENVIRONMENT_SET_ROTATION      2
 #define RETRO_ENVIRONMENT_SET_PIXEL_FORMAT 10
 #define RETRO_ENVIRONMENT_SET_HW_RENDER    14
 

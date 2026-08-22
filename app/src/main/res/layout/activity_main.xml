@@ -314,9 +314,9 @@
             </LinearLayout>
 
             <!--
-                TEMPORARY - gate 1 of the libretro shim route. This whole card
-                goes away with ShimProbeService.kt once the gate is answered.
-                It sits last because it is developer tooling, not setup.
+                The shim frame link. Developer tooling for now, so it sits
+                last; it becomes the ordinary frame source at gate 4 and this
+                card turns into a status readout rather than a control.
             -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -329,7 +329,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/shim_probe_title"
+                    android:text="@string/shim_link_title"
                     android:textColor="@color/primary"
                     android:textSize="14sp"
                     android:textStyle="bold" />
@@ -339,19 +339,35 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
                     android:lineSpacingExtra="2dp"
-                    android:text="@string/shim_probe_hint"
+                    android:text="@string/shim_link_hint"
                     android:textColor="@color/text_secondary"
                     android:textSize="11sp" />
 
-                <Button
-                    android:id="@+id/btnShimProbe"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="@string/shim_probe_start"
-                    android:textColor="@color/primary"
-                    android:textSize="12sp" />
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnShimProbe"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="@string/shim_link_start"
+                        android:textColor="@color/primary"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnShimDump"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/shim_link_dump"
+                        android:textColor="@color/primary"
+                        android:textSize="12sp" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/tvShimProbe"
@@ -359,7 +375,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:fontFamily="monospace"
-                    android:text="@string/shim_probe_idle"
+                    android:text="@string/shim_link_idle"
                     android:textColor="@color/text_secondary"
                     android:textIsSelectable="true"
                     android:textSize="10sp" />

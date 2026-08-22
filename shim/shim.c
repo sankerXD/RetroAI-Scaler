@@ -28,6 +28,7 @@
  * Neither changes behaviour. Both forward regardless of what they observe.
  */
 #include "libretro_abi.h"
+#include "frame_link.h"
 
 #include <android/log.h>
 #include <dirent.h>
@@ -552,6 +553,11 @@ static void load_once(void)
     /* After the core is known to be good, so a failure here can never be
      * confused with a failure to load. Purely additive and idempotent. */
     install_info_file(g_self_dir, g_self_base, g_core_base);
+
+    /* Starts a thread that tries to reach the app once a second and otherwise
+     * costs nothing. Until it connects, frame_link_publish returns on one
+     * atomic load and the shim stays the pure passthrough gate 2 measured. */
+    frame_link_start();
 }
 
 /*
@@ -584,9 +590,22 @@ static bool shim_env_cb(unsigned cmd, void *data)
         const char *name = fmt == 0 ? "0RGB1555" : fmt == 1 ? "XRGB8888"
                          : fmt == 2 ? "RGB565" : "unknown";
         LOGI("core requests pixel format %u (%s)", fmt, name);
+        /* Record it either way; whether RetroArch accepts is its answer to
+         * give, and if it refuses the core will ask again with another format
+         * and this will be overwritten by that one. */
+        frame_link_set_format(fmt);
+    } else if (cmd == RETRO_ENVIRONMENT_SET_ROTATION && data) {
+        frame_link_set_rotation(*(const unsigned *)data);
     } else if (cmd == RETRO_ENVIRONMENT_SET_HW_RENDER) {
-        LOGI("core requests HW rendering - gate 3 must refuse this, there are "
-             "no CPU pixels to take from such a core");
+        /* A core rendering on the GPU hands video_refresh a sentinel, not
+         * pixels, so there is nothing for us to take. Refusing is honest and
+         * makes the core fall back to software where it can; pretending to
+         * accept would leave us silently receiving no frames at all.
+         * RetroArch then keeps drawing normally and the app falls back to the
+         * MediaProjection path (§9). */
+        LOGI("core requests HW rendering - refusing, there are no CPU pixels "
+             "to take from such a core; the app must fall back to capture");
+        return false;
     }
 
     return g_env_cb ? g_env_cb(cmd, data) : false;
@@ -605,11 +624,19 @@ static void shim_video_cb(const void *data, unsigned width, unsigned height,
      *   anything else               - real pixels at `data`
      * Gate 3 hangs the publish on that third branch. Gate 2 only counts. */
     if (data && data != RETRO_HW_FRAME_BUFFER_VALID) {
-        if (g_frames == 0)
+        frame_link_publish(data, width, height, pitch);
+
+        if (g_frames == 0) {
             LOGI("first frame: %ux%u pitch=%zu (%zu bytes/pixel implied)",
                  width, height, pitch, width ? pitch / width : 0);
-        else if ((g_frames % 3600) == 0)
-            LOGI("frame %lu: %ux%u pitch=%zu", g_frames, width, height, pitch);
+        } else if ((g_frames % 3600) == 0) {
+            unsigned long sent, dropped;
+            bool connected;
+            frame_link_stats(&sent, &dropped, &connected);
+            LOGI("frame %lu: %ux%u pitch=%zu link=%s sent=%lu dropped=%lu",
+                 g_frames, width, height, pitch,
+                 connected ? "up" : "down", sent, dropped);
+        }
         g_frames++;
     }
 
@@ -713,6 +740,11 @@ RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
          info->geometry.max_width, info->geometry.max_height,
          (double)info->geometry.aspect_ratio,
          info->timing.fps, info->timing.sample_rate);
+
+    /* The one place with both the maximum geometry and no frame in flight.
+     * Allocating here rather than on first frame keeps malloc out of
+     * retro_run, where an unbounded pause is a dropped frame in the game. */
+    frame_link_alloc(info->geometry.max_width, info->geometry.max_height);
 }
 
 RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)

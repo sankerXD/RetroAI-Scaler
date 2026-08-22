@@ -182,9 +182,11 @@
     <string name="capture_auto_stop">停止自动采集　%1$d 张\n%2$s</string>
     <string name="capture_auto_start">开始自动采集</string>
 
-    <string name="shim_probe_title">门 1 · IPC 自检（临时）</string>
-    <string name="shim_probe_hint">在 127.0.0.1:55435 上开一个回环监听，然后让 RetroArch 连过来：联机 → 连接到联机主机 → 127.0.0.1。只要有一次连接被接受，这道门就过了。</string>
-    <string name="shim_probe_start">启动自检</string>
-    <string name="shim_probe_stop">停止自检</string>
-    <string name="shim_probe_idle">未运行。</string>
+    <string name="shim_link_title">shim 帧链路（门 3）</string>
+    <string name="shim_link_hint">在回环地址上等 RetroArch 里的 shim 送帧过来，端口写在 RetroAIScaler/shim/link.txt。只统计和测量，暂不渲染。</string>
+    <string name="shim_link_start">启动帧链路</string>
+    <string name="shim_link_stop">停止帧链路</string>
+    <string name="shim_link_dump">落盘下一帧</string>
+    <string name="shim_link_idle">未运行。</string>
+    <string name="shim_link_notification">正在回环地址上等帧</string>
 </resources>

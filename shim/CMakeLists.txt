@@ -12,7 +12,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # strips it to find the real core beside it, so a rename is the entire
 # mechanism for supporting another core. PREFIX "" because libretro cores on
 # Android carry no "lib".
-add_library(vbam_shim_libretro_android SHARED shim.c)
+add_library(vbam_shim_libretro_android SHARED shim.c frame_link.c)
 set_target_properties(vbam_shim_libretro_android PROPERTIES PREFIX "")
 
 target_compile_options(vbam_shim_libretro_android PRIVATE
