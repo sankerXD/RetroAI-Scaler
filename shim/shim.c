@@ -36,6 +36,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define TAG "RetroAI_Shim"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -267,6 +268,11 @@ static bool info_stem(const char *so_name, char *out, size_t out_sz)
     return true;
 }
 
+static char tolower_ascii(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
 static void describe_savestate_keys(const char *info_path)
 {
     FILE *f = fopen(info_path, "r");
@@ -311,6 +317,69 @@ static void describe_info_dir(const char *info_dir)
     }
     closedir(d);
     LOGI("  info dir %s: %d .info files, %d other entries", info_dir, infos, others);
+}
+
+static bool contains_ci(const char *haystack, const char *needle)
+{
+    size_t nl = strlen(needle);
+    for (const char *p = haystack; *p; p++) {
+        size_t i = 0;
+        while (i < nl && p[i] && tolower_ascii(p[i]) == tolower_ascii(needle[i])) i++;
+        if (i == nl) return true;
+    }
+    return false;
+}
+
+/*
+ * Drop RetroArch's core-info cache when it predates the .info we installed.
+ *
+ * Writing the file is not enough on its own: RetroArch caches the parsed info
+ * list in that directory, and a cache built before our core existed does not
+ * mention it, so the file sits there and is never read. Measured symptom: the
+ * .info present at startup, savestate = "true" inside it, and save states
+ * still refused.
+ *
+ * The staleness test is what keeps this from being vandalism. We delete only a
+ * cache OLDER than our own file, so once RetroArch has rebuilt it the
+ * condition stops holding and we never touch it again - no delete-on-every-
+ * launch, no fighting with RetroArch over a file it owns. And a cache is by
+ * definition regenerable; if we are wrong about which file this is, the cost
+ * is one slower startup.
+ */
+static void invalidate_stale_info_cache(const char *info_dir, const char *our_info)
+{
+    struct stat ours;
+    if (stat(our_info, &ours) != 0) return;
+
+    DIR *d = opendir(info_dir);
+    if (!d) return;
+
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        size_t n = strlen(e->d_name);
+        if (n > 5 && strcmp(e->d_name + n - 5, ".info") == 0) continue;
+        if (!contains_ci(e->d_name, "cache")) continue;
+
+        char path[PATH_MAX];
+        if ((size_t)snprintf(path, sizeof(path), "%s/%s", info_dir, e->d_name)
+                >= sizeof(path))
+            continue;
+
+        struct stat cache;
+        if (stat(path, &cache) != 0 || !S_ISREG(cache.st_mode)) continue;
+
+        if (cache.st_mtime >= ours.st_mtime) {
+            LOGI("  %s is newer than our .info, leaving it alone", e->d_name);
+            continue;
+        }
+        if (remove(path) == 0)
+            LOGI("  removed stale core-info cache %s - RetroArch rebuilds it "
+                 "on the next launch, and that is when save states appear",
+                 path);
+        else
+            LOGE("  could not remove stale cache %s", path);
+    }
+    closedir(d);
 }
 
 static void install_info_file(const char *self_dir, const char *self_base,
@@ -369,6 +438,7 @@ static void install_info_file(const char *self_dir, const char *self_base,
         long sz = ftell(out);
         fclose(out);
         LOGI("%s already exists (%ld bytes), leaving it alone", dst, sz);
+        invalidate_stale_info_cache(info_dir, dst);
         return;
     }
 
@@ -400,6 +470,7 @@ static void install_info_file(const char *self_dir, const char *self_base,
     LOGI("wrote %s (%zu bytes copied from %s) - save states need one more "
          "launch, RetroArch builds its info list before loading any core",
          dst, total, src);
+    invalidate_stale_info_cache(info_dir, dst);
 }
 
 #define SYM(field, name)                                                       \
