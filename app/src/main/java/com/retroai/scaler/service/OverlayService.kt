@@ -232,9 +232,34 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 val idleMs = now - bridge.lastFrameAtMs
                 if (idleMs > stallMs && !isOverlayCleared) {
                     if (!shimMode) Log.w(TAG, "No frame for ${idleMs}ms - wiping overlay transparent.")
-                    nativeBridge.nativeClearOverlay()
+                    /*
+                     * ON the thread that owns the EGL context, not from here.
+                     *
+                     * This ran inline on the main thread for a long time and
+                     * looked fine, because under screen capture it took ten
+                     * seconds of silence to reach and almost never did.
+                     * ensureEglContextCurrent() fails silently when the context
+                     * is current on another thread, the wipe becomes a no-op,
+                     * and the last frame stays frozen on the glass -
+                     * AGENT.md §10.3b, written down and then not followed here.
+                     * The shim asks for this every time a menu opens, which is
+                     * what finally made it visible.
+                     */
+                    if (!bridge.runOnCaptureThread { nativeBridge.nativeClearOverlay() }) {
+                        Log.w(TAG, "no frame thread to wipe on - doing it inline")
+                        nativeBridge.nativeClearOverlay()
+                    }
+                    // Hand back touches and opacity while the picture is not
+                    // ours: with the shim this is RetroArch's own menu showing
+                    // through, and an invisible full-screen overlay that still
+                    // swallows taps would make it unusable for anyone not on a
+                    // handheld with physical buttons.
+                    if (shimMode) setOverlayObscuring(false)
                     isOverlayCleared = true
                 } else if (idleMs <= stallMs) {
+                    if (isOverlayCleared && shimMode && isRenderingActive) {
+                        setOverlayObscuring(true)
+                    }
                     isOverlayCleared = false
                 }
             }
