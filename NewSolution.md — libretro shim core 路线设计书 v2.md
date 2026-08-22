@@ -309,7 +309,13 @@ shim 模式下 overlay 全屏不透明，**RA 的快捷菜单会被完全挡死*
 1. 在我们的 APP 里点【启用 shim 帧源】。APP 把 `vbam_shim_libretro_android.so` 写到 `/storage/emulated/0/RetroAI-Scaler/cores/`。
 2. APP 弹一个引导页（配图），告诉用户：打开 RetroArch → 加载核心 → **安装和还原核心** → 选中那个文件。RA 会把它复制进 `/data/data/com.retroarch.aarch64/cores/`。
 3. 回到我们的 APP 点【完成】。APP 扫描并改写 Pegasus 的 `launch:` 行。
-4. **提示用户重启一次天马G**（Pegasus 只在启动时读 metadata）。
+4. **提示用户在天马G 里走一次「设置 → 重新加载」。**
+
+   > **不是"重启天马G"，这条改过一次（2026-08-22 实测）。** 国内用的天马G 几乎都是**大光圈的魔改版**，它把上游 Pegasus"每次启动重扫"改成了**静态扫描**——理由是每次进 APP 要等 5~6 秒。于是 `Roms` 下的任何改动**不重扫就永远不生效**，而重启 APP 并不触发重扫。
+   >
+   > 这条一度让人以为 shim 路线不成立：metadata 文件改对了、包名对了、整机重启过了，RA 拿到的仍然是旧核心路径。**判据是眼睛能看到的东西**——把某个游戏的标题临时改成 `[SHIM]xxx`，重扫后标题变了，才说明文件真被读了。查日志查不出这个，因为日志里那行 `[ENV] Libretro path` 只忠实转述 intent，而 intent 来自内存里那份陈旧的扫描结果。
+   >
+   > 上游 Pegasus 的行为（启动即重扫）**不能拿来当假设**。面向用户的引导文案要按魔改版写。
 5. 之后照常从天马G 点游戏。
 
 第 2 步是唯一需要用户操作 RA 的地方，一次性。**这一步无法自动化**——我们写不了 RA 的私有目录，这是安卓的边界，不是设计缺陷。
@@ -329,14 +335,21 @@ v1 §4.2 整节作废。理由：
 针对 Pegasus 的特殊点：
 
 1. **两处都要扫**：`/storage/emulated/0/Roms/<机种>/metadata.pegasus.txt` 和 `/storage/<SD-UUID>/Roms/<机种>/metadata.pegasus.txt`。SD 卡的 UUID 要枚举（本机是 `7C32-2F40`，不能写死）。
-2. **不要往 Pegasus 文件里写标记行。** Pegasus 的 metadata 格式对 `#` 注释的支持没有确认过，而**写坏了 Pegasus 就启动不了游戏**——这是用户能感知到的最严重故障。改用自识别：
+
+   > 本机实测（2026-08-22）：机身存储上**根本没有 `Roms` 目录**，27 份带 `-e LIBRETRO` 的 metadata 全在 SD 卡上。规则照旧两处都扫，但"两处都有"不是常态。
+
+2. **一个文件里可能有多个 `-e LIBRETRO`，而且分两种。** GBA 那份 328KB、466 个游戏，里面有：collection 级的 `launch:`（第 4 行，管全部游戏），以及**单游戏 override**（`超级机器人大战OG2` 自带一个 gpSP 的 `launch:`）。改写器必须**逐个 token 判断**，只改我们有对应 shim 的那些，不能假设"一份文件一个核心"。
+
+3. **文件是 CRLF 换行**（本机那份 2859 处）。只做行内 token 替换的话字节数正好 +5，干净；**顺手把换行统一了会产生一个 2859 行的 diff**，而这是用户唯一真正感受得到的故障所在的文件。
+4. **不要往 Pegasus 文件里写标记行。** Pegasus 的 metadata 格式对 `#` 注释的支持没有确认过，而**写坏了 Pegasus 就启动不了游戏**——这是用户能感知到的最严重故障。改用自识别：
 
    > **我们的修改是自描述的**：任何形如 `<name>_shim_libretro_android.so` 的路径都是我们写的，还原时去掉 `_shim` 即可。**不依赖任何外部记录**，manifest 丢了也能还原。
 
    这比 AGENT.md §2 那套标记行更强——那条教训是"改标记串会让旧标记变成孤儿"，而自描述的规则没有这个问题。
-3. **只替换那一个 token**，用精确字符串匹配，不要正则重写整行，更不要重排 `launch:` 块。
-4. 改写前先确认那个文件里确实有 `-e LIBRETRO`，没有就跳过并记录。
-5. **写 SD 卡那一份需要确认权限**：`MANAGE_EXTERNAL_STORAGE` 覆盖可移动卷的共享存储区域，理论上可写，但**实测确认**（列在门 0 的残留项）。
+5. **只替换那一个 token**，用精确字符串匹配，不要正则重写整行，更不要重排 `launch:` 块。
+6. 改写前先确认那个文件里确实有 `-e LIBRETRO`，没有就跳过并记录。
+7. **写 SD 卡那一份已实测可写**（2026-08-22）：内置存储和 SD 卡两处的 `create → write → read-back → rename → delete` 全部放行。判据故意用「在同目录建临时文件再删掉」，不是往 `metadata.pegasus.txt` 本身写——**rename 能不能过才是原子替换真正需要的能力**（允许 create 却拒绝 rename 的卷，只会在第一次写坏用户启动文件时才暴露），而为了测「能不能写」去动用户的启动文件，赌的是他们唯一真正感受得到的故障。
+8. **改完必须让天马G 重扫**，见 §5.2 第 4 步——魔改版不重扫就永远不生效，而这个失败**在日志里长得跟"改写没生效"一模一样**。
 
 ---
 
@@ -436,6 +449,27 @@ adb logcat -d | grep -iE "RetroArch|RetroAI_Shim"
 - ✅ 日志出现 `[ENV] Libretro path: ".../vbam_shim_libretro_android.so"`；
 - ✅ shim 打出"已 dlopen `vbam_libretro_android.so`"；
 - ✅ **游戏正常运行，画面、声音、按键、存档全部无异常**——shim 此时是完全透明的，任何差异都是转发写错了。
+
+**2026-08-22 实测：机制全部成立。**
+
+```
+[ENV] Libretro path: ".../vbam_shim_libretro_android.so"
+RetroAI_Shim: control file readable from inside RetroArch: 'port=55435'
+RetroAI_Shim: dlopen real core: .../vbam_libretro_android.so
+RetroAI_Shim: real core loaded and all 25 entry points resolved
+RetroAI_Shim: core requests pixel format 2 (RGB565)
+RetroAI_Shim: load_game: .../塞尔达传说 缩小帽.zip#<压缩包内文件>.gba
+```
+
+顺带定下三件事：
+
+- **门 3 的输入格式是 RGB565**，不再是"三种都要支持"的猜测。§4.6 里 5/6bit→8bit 必须位复制（`(c<<3)|(c>>2)`）那条现在是**主路径**，不是边角情况。
+- **E5 收口**：RA 进程确实能读 `/storage/emulated/0/RetroAIScaler/shim/` 下的文件，端口/token 的兜底通道成立。
+- **zip 内容照常**：RA 传的是 `<zip>#<内部文件>` 形式，说明 VBA-M 的 `need_fullpath=false`、RA 在内存里解包后喂 buffer，那个路径只是信息性的。没有 `.info` 不影响解包判定。
+
+> **调试这道门花掉的时间几乎全在别处**：文件改对了、包名对了、整机重启了，RA 拿到的仍是旧核心路径——根因是天马G 的静态扫描（§5.2 第 4 步）。教训是那条老规矩的又一个实例：**判据要选眼睛能直接看到的东西**。改一个游戏标题看它变不变，比读十遍 `[ENV] Libretro path` 快得多——后者只忠实转述 intent，而 intent 来自内存里那份陈旧的扫描结果，日志再详细也照不见这一层。
+>
+> 中途我自己还放过一个废检查：`find ... -exec grep -l vbam_libretro_android.so` 搜的是一个**当时已经被我们改掉、因此必然搜不到**的字符串。它不可能失败，也什么都没验证。同 AGENT.md §6 的 `; adb install` 和 §11.7 的 `am start` 漏 `-S`。
 
 **失败对策**：
 
