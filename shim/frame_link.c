@@ -317,7 +317,11 @@ void frame_link_set_hw_render(bool hardware_rendered)
     /* Force a resend: a core can ask for hardware rendering after the link is
      * already up, and a notice the app never hears is the same as no notice. */
     atomic_store(&g_notice_sent, false);
-    sem_post(&g_wake);
+    /* Guarded, because this arrives during retro_set_environment and the
+     * semaphore is not created until the thread starts at retro_load_game.
+     * Posting an uninitialised semaphore is undefined, and the flag above is
+     * read on the next wakeup anyway. */
+    if (atomic_load(&g_running)) sem_post(&g_wake);
 }
 
 void frame_link_start(void)

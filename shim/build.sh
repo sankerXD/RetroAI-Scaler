@@ -69,6 +69,16 @@ else
     echo "ok    no libc++_shared dependency ($("$READELF" -d "$OUT" | grep -c NEEDED) shared libs needed)"
 fi
 
+# A library that starts a thread and can still be unmapped is a crash waiting
+# for whoever unloads it. RetroArch does exactly that when you look at a core
+# and back out, and it cost one on the device before this check existed.
+if "$READELF" -d "$OUT" | grep -q NODELETE; then
+    echo "ok    marked NODELETE, so RetroArch cannot unmap it out from under our thread"
+else
+    echo "FAIL: not marked NODELETE - dlclose would unmap a library with a live thread in it" >&2
+    fail=1
+fi
+
 [ "$fail" -eq 0 ] || exit 1
 echo
 echo "built $OUT"

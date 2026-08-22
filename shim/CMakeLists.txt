@@ -29,4 +29,17 @@ target_link_libraries(vbam_shim_libretro_android log)
 target_link_options(vbam_shim_libretro_android PRIVATE
     # A core with an unresolved symbol loads fine and dies at the call site,
     # inside RetroArch's process, with no useful stack. Refuse at link time.
-    -Wl,--no-undefined)
+    -Wl,--no-undefined
+
+    # This library starts a thread, so it must never be unmapped.
+    #
+    # RetroArch dlcloses a core when it is done with it - including when you
+    # merely select one in the menu to look at it and then back out. Our sender
+    # thread survives that, and the moment its code is unmapped it faults
+    # somewhere with no stack worth reading. Measured: selecting the shim in
+    # Load Core crashed RetroArch immediately after logging a clean startup.
+    #
+    # nodelete pins the library for the life of the process, which is what we
+    # want anyway - we also hold a dlopen handle on the real core and never
+    # release it.
+    -Wl,-z,nodelete)

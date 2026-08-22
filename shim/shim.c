@@ -791,11 +791,6 @@ static void load_once(void)
      * confused with a failure to load. Purely additive and idempotent. */
     install_info_file(g_self_dir, g_self_base, g_core_base);
 
-    /* Starts a thread that tries to reach the app once a second and otherwise
-     * costs nothing. Until it connects, frame_link_publish returns on one
-     * atomic load and the shim stays the pure passthrough gate 2 measured. */
-    frame_link_start();
-
     /* Last, and only once the core is known good: a failure here must never be
      * confused with a failure to load, and there is nothing to replicate for if
      * this shim itself did not work. */
@@ -1097,6 +1092,20 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
         return false;
     }
     LOGI("load_game: %s", (game && game->path) ? game->path : "(no path)");
+
+    /*
+     * The link thread starts here, not at core load.
+     *
+     * RetroArch loads a core just to look at it - selecting one in the menu
+     * does it - and a thread spawned for a core nobody is going to run is pure
+     * cost, and one more thing alive across an unload. Content being loaded is
+     * the first moment frames can exist.
+     *
+     * Idempotent, so a second game in the same session does not start a second
+     * thread. Until the app connects, frame_link_publish returns on one atomic
+     * load and the shim stays the pure passthrough gate 2 measured.
+     */
+    frame_link_start();
     return g_core.load_game(game);
 }
 
