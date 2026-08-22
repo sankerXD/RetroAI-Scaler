@@ -234,6 +234,7 @@ class MainActivity : AppCompatActivity() {
             append(if (ShimFrameService.connected) "link UP" else "link down")
             append("  frames=").append(frames)
             append("  %.2f fps".format(ShimFrameService.measuredFps))
+            append("  avg %.3f".format(ShimFrameService.averageFps))
             append("\n")
             append(ShimFrameService.lastWidth).append("x").append(ShimFrameService.lastHeight)
             append("  pitch=").append(ShimFrameService.lastPitch)

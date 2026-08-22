@@ -76,6 +76,7 @@ class ShimFrameService : Service() {
         @Volatile var lastFormat = -1
         @Volatile var lastRotation = 0
         @Volatile var measuredFps = 0.0
+        @Volatile var averageFps = 0.0
         @Volatile var connected = false
 
         /** Set by the UI; the next frame to arrive is written out as a PNG. */
@@ -90,6 +91,7 @@ class ShimFrameService : Service() {
     }
 
     @Volatile private var stopping = false
+    @Volatile private var client: Socket? = null
     private var server: ServerSocket? = null
     private var thread: Thread? = null
     private var token: String = ""
@@ -105,6 +107,7 @@ class ShimFrameService : Service() {
         framesReceived.set(0)
         bytesReceived.set(0)
         measuredFps = 0.0
+        averageFps = 0.0
         connected = false
         stopping = false
         isRunning = true
@@ -127,6 +130,13 @@ class ShimFrameService : Service() {
             server?.close()
         } catch (t: Throwable) {
             Log.w(TAG, "closing server socket", t)
+        }
+        // And the accepted socket: the frame loop blocks indefinitely on read
+        // by design, so closing the listener alone would not wake it.
+        try {
+            client?.close()
+        } catch (t: Throwable) {
+            Log.w(TAG, "closing client socket", t)
         }
         // Remove the rendezvous file so the shim stops trying to reach a port
         // nobody is listening on any more.
@@ -175,6 +185,7 @@ class ShimFrameService : Service() {
                 say("client ended - ${t.javaClass.simpleName}: ${t.message}")
             } finally {
                 connected = false
+                this.client = null
                 try {
                     client.close()
                 } catch (ignored: Throwable) {
@@ -208,7 +219,10 @@ class ShimFrameService : Service() {
     }
 
     private fun handleClient(client: Socket) {
+        this.client = client
         client.tcpNoDelay = true
+        // Bounded for the handshake: a peer that connects and says nothing must
+        // not hold the single accept slot forever.
         client.soTimeout = 5000
         val input = DataInputStream(client.getInputStream().buffered(1 shl 16))
 
@@ -239,9 +253,27 @@ class ShimFrameService : Service() {
         connected = true
         say("shim connected")
 
+        /*
+         * No read timeout past this point, and that is not laziness.
+         *
+         * A frame stream going quiet is a NORMAL state here, not a fault: when
+         * RetroArch's menu opens it pauses the core, retro_run stops, and no
+         * frames are produced until the menu closes. §4.7 relies on exactly
+         * that silence as the signal for the overlay to step aside. A read
+         * timeout turns that normal state into a dropped connection - measured,
+         * the first run died with "Read timed out" the moment the menu was
+         * opened.
+         *
+         * Nothing is lost by blocking: if RetroArch exits, the socket closes
+         * and readFully throws, and if the service is stopping, onDestroy
+         * closes this socket underneath us for the same effect.
+         */
+        client.soTimeout = 0
+
         var payload = ByteArray(0)
         var windowStart = SystemClock.elapsedRealtime()
         var windowFrames = 0
+        val firstFrameAt = AtomicLong(0)
 
         while (!stopping) {
             input.readFully(header)
@@ -268,11 +300,19 @@ class ShimFrameService : Service() {
 
             windowFrames++
             val now = SystemClock.elapsedRealtime()
+            if (firstFrameAt.get() == 0L) firstFrameAt.set(now)
             val elapsed = now - windowStart
             if (elapsed >= 1000) {
                 measuredFps = windowFrames * 1000.0 / elapsed
                 windowStart = now
                 windowFrames = 0
+                /* A one-second window is too coarse to tell 59.7275 from 60 -
+                 * a single frame landing either side of the boundary moves it
+                 * by a whole fps, which is why the first run read 60.76. The
+                 * session average settles, and settling on the core's real
+                 * rate is the actual gate criterion. */
+                val span = now - firstFrameAt.get()
+                if (span > 0) averageFps = (framesReceived.get() - 1) * 1000.0 / span
             }
 
             if (dumpRequested.compareAndSet(true, false)) {
