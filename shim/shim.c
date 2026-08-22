@@ -54,6 +54,8 @@
 /* One core filename per line, written by the app from what it found in the
  * frontend's launch lines. See replicate_for_listed_cores. */
 #define CORES_FILE "/storage/emulated/0/RetroAIScaler/shim/cores.txt"
+/* What is actually on disk, written back for the app. See report_installed. */
+#define INSTALLED_FILE "/storage/emulated/0/RetroAIScaler/shim/installed.txt"
 #define CORE_SUFFIX "_libretro_android.so"
 #define SHIM_SUFFIX "_shim_libretro_android.so"
 
@@ -512,6 +514,59 @@ static void replicate_for_listed_cores(const char *self_dir, const char *self_ba
     if (made) LOGI("replicated into %d core name(s), %d skipped", made, skipped);
 }
 
+/*
+ * Write back the shims that actually exist, for the app to read.
+ *
+ * The app cannot see RetroArch's core directory - that is the whole reason
+ * replication has to happen on this side - so it has no way of knowing which
+ * shims are installed. And it needs to know exactly: rewriting a launch line to
+ * point at a shim that is not there is the one way this route hard-fails for
+ * the player, with RetroArch refusing to open the core.
+ *
+ * So this is the interlock. It lists what is on disk right now rather than what
+ * we just wrote, so a hand-installed shim counts too and a failed copy does
+ * not.
+ */
+static void report_installed(const char *self_dir)
+{
+    DIR *d = opendir(self_dir);
+    if (!d) return;
+
+    char tmp[PATH_MAX];
+    if ((size_t)snprintf(tmp, sizeof(tmp), "%s.tmp", INSTALLED_FILE) >= sizeof(tmp)) {
+        closedir(d);
+        return;
+    }
+    FILE *f = fopen(tmp, "w");
+    if (!f) {
+        closedir(d);
+        LOGE("cannot write %s - the app will not know what is installed", tmp);
+        return;
+    }
+
+    struct dirent *e;
+    int n = 0;
+    while ((e = readdir(d))) {
+        size_t len = strlen(e->d_name);
+        size_t suffix_len = strlen(SHIM_SUFFIX);
+        if (len <= suffix_len ||
+            strcmp(e->d_name + len - suffix_len, SHIM_SUFFIX) != 0)
+            continue;
+        fprintf(f, "%s\n", e->d_name);
+        n++;
+    }
+    closedir(d);
+    fclose(f);
+    /* Same temp-and-rename as everything else here: the app may read this at
+     * any moment, and a half-written list would have it rewrite launch lines
+     * for cores it only thinks are covered. */
+    if (rename(tmp, INSTALLED_FILE) != 0) {
+        remove(tmp);
+        return;
+    }
+    LOGI("reported %d installed shim(s) to the app", n);
+}
+
 static void install_info_file(const char *self_dir, const char *self_base,
                               const char *core_base)
 {
@@ -690,6 +745,7 @@ static void load_once(void)
      * confused with a failure to load, and there is nothing to replicate for if
      * this shim itself did not work. */
     replicate_for_listed_cores(g_self_dir, g_self_base);
+    report_installed(g_self_dir);
 }
 
 /*
