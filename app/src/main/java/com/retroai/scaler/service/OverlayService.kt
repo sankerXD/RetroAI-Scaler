@@ -219,13 +219,23 @@ class OverlayService : Service(), SurfaceHolder.Callback {
              * here is to tell the player exactly which button to press instead.
              */
             if (shimMode && ShimFrameService.hardwareRenderedCore) {
-                Log.w(TAG, "core renders on the GPU - the shim has no frames to give")
-                Toast.makeText(
-                    this@OverlayService,
-                    getString(R.string.toast_shim_hw_core),
-                    Toast.LENGTH_LONG
-                ).show()
-                stopSelf()
+                /*
+                 * Ask for screen capture right here, rather than telling
+                 * someone to go and find a button.
+                 *
+                 * The consent dialog needs an Activity and a Service has none -
+                 * but it can start one, and this app holds SYSTEM_ALERT_WINDOW,
+                 * which is one of the exemptions from the background
+                 * activity-start restrictions. So the only part that genuinely
+                 * cannot be automatic is the tap on the system dialog.
+                 */
+                Log.w(TAG, "core renders on the GPU - switching to screen capture")
+                shimMode = false   // once only; the activity takes it from here
+                startActivity(
+                    Intent(this@OverlayService, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        .putExtra(MainActivity.EXTRA_REQUEST_CAPTURE, true)
+                )
                 return
             }
 
@@ -787,13 +797,25 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 // exists, so without this the service would keep the direct
                 // source that has no frames to give and quietly ignore the
                 // projection the player just granted.
-                if (shimMode) {
+                if (shimSource != null) {
                     Log.i(TAG, "switching from the direct source to screen capture")
                     frameSource?.pauseCapture()
                     frameSource?.detachEglContext()
                     stopFrameSource()
-                    shimMode = false
                 }
+                shimMode = false
+                /*
+                 * None of the capture state survives the switch.
+                 *
+                 * The detected window belongs to whatever console was last
+                 * measured under capture, and the capture mode to whatever was
+                 * last probed - both from a different session, possibly a
+                 * different console. Carrying either across is how a
+                 * PlayStation ends up sampled through a window measured for a
+                 * Super Famicom, with the hole landing in the middle of the
+                 * picture instead of in a corner.
+                 */
+                floatingBallManager?.clearDetectedWindow()
                 val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = mpManager.getMediaProjection(resultCode, data)
                 startCapturePipeline()

@@ -242,6 +242,10 @@
     <string name="shim_guide_launcher">In your launcher:\n\nCome back to this app and press “2 · Update the launcher”.</string>
     <string name="reload_notice_title">Reload your library</string>
     <string name="reload_notice_body">Go back to Pegasus: Settings → Reload.\n\nIf you are running the original Pegasus rather than a modified build, ignore this.</string>
+    <string name="capture_needed_title">This console needs screen recording</string>
+    <string name="capture_needed_body">It is drawn on the GPU, so the picture cannot be taken from inside the emulator. Screen recording works for it — Android will ask for permission next.</string>
+    <string name="capture_ready_title">Restart the game</string>
+    <string name="capture_ready_body">Close RetroArch and start the game again. RetroArch only reads the new layout when it loads content, so the game running now will not pick it up.</string>
     <string name="shim_guide_ok">Got it</string>
     <string name="shim_guide_body_restore">Every launch entry will be restored.</string>
     <string name="shim_link_stop">Disconnect</string>

@@ -1001,7 +1001,7 @@ class FloatingBallManager(
         applyRenderProfile()
     }
 
-    private fun clearDetectedWindow() {
+    fun clearDetectedWindow() {
         profile.detectedSourceRect = null
         applyRenderProfile()
         Toast.makeText(context, R.string.toast_corner_restored, Toast.LENGTH_SHORT).show()

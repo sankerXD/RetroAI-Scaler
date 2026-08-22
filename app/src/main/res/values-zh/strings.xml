@@ -200,6 +200,10 @@
     <string name="shim_guide_launcher">天马G 设置：\n\n回到本 APP，点击【2 · 覆盖天马G配置】。</string>
     <string name="reload_notice_title">需要重新加载游戏库</string>
     <string name="reload_notice_body">回到天马G：设置 → 重新加载。\n\n如果你用的是原版天马G（非大光圈修改版），请无视。</string>
+    <string name="capture_needed_title">该平台需要录屏模式</string>
+    <string name="capture_needed_body">它是用 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效——接下来系统会请求录屏授权。</string>
+    <string name="capture_ready_title">请重启游戏</string>
+    <string name="capture_ready_body">关闭 RetroArch，然后重新启动游戏。RA 只在载入内容时读取新的画面布局，正在跑的这一局不会生效。</string>
     <string name="shim_guide_ok">知道了</string>
     <string name="shim_guide_body_restore">所有启动项都会恢复。</string>
     <string name="shim_link_stop">断开连接</string>

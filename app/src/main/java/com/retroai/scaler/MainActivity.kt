@@ -34,6 +34,13 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+
+        /**
+         * Brought to the front by the service because the core it just met
+         * renders on the GPU. Only the tap on the system consent dialog is
+         * left for the player.
+         */
+        const val EXTRA_REQUEST_CAPTURE = "extra_request_capture"
     }
 
     private lateinit var tvStatusText: TextView
@@ -74,6 +81,7 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             startOverlayService(result.resultCode, result.data!!)
+            showRestartGameNotice()
         } else {
             Toast.makeText(this, R.string.toast_no_capture_permission, Toast.LENGTH_SHORT).show()
         }
@@ -96,6 +104,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         initViews()
+        handleCaptureRequest(intent)
         checkHardwareCapabilities()
         updatePermissionButtons()
         healLeftoverRetroArchConfig()
@@ -576,6 +585,26 @@ class MainActivity : AppCompatActivity() {
      * but as an exception offered when it is needed, not as a choice to be
      * understood up front.
      */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // singleTask, so a second launch arrives here rather than in onCreate.
+        handleCaptureRequest(intent)
+    }
+
+    private fun handleCaptureRequest(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_REQUEST_CAPTURE, false) != true) return
+        intent.removeExtra(EXTRA_REQUEST_CAPTURE)
+        preselectConsoleFromCore()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.capture_needed_title)
+            .setMessage(R.string.capture_needed_body)
+            .setPositiveButton(R.string.shim_guide_start) { _, _ -> requestStartCapturePipeline() }
+            .setNegativeButton(R.string.btn_cancel) { _, _ -> stopOverlayService() }
+            .setCancelable(false)
+            .show()
+    }
+
     private fun requestStartPipeline() {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, R.string.toast_grant_overlay_first, Toast.LENGTH_SHORT).show()
@@ -608,6 +637,22 @@ class MainActivity : AppCompatActivity() {
         }
         val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         screenCaptureLauncher.launch(mpManager.createScreenCaptureIntent())
+    }
+
+    /**
+     * Says the one thing left to do after consent.
+     *
+     * RetroArch reads its override config only when it loads content, so a
+     * viewport written while a game is already running does not apply to that
+     * game - it has to be started again. §11.3 calls this the deadlock in the
+     * ordering, and it is not one we can undo from here.
+     */
+    private fun showRestartGameNotice() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.capture_ready_title)
+            .setMessage(R.string.capture_ready_body)
+            .setPositiveButton(R.string.shim_guide_ok, null)
+            .show()
     }
 
     private fun startOverlayService(resultCode: Int, data: Intent) {
