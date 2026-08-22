@@ -57,6 +57,9 @@
 /* What is actually on disk, written back for the app. See report_installed. */
 #define INSTALLED_FILE "/storage/emulated/0/RetroAIScaler/shim/installed.txt"
 #define CORE_SUFFIX "_libretro_android.so"
+/* Appended to display_name in our copy of a core's .info, so the two can be
+ * told apart in RetroArch's core list. See install_info_file. */
+#define INFO_TAG " (RetroAI)"
 #define SHIM_SUFFIX "_shim_libretro_android.so"
 
 /* Where RetroArch keeps retroarch.cfg on Android, relative to external
@@ -417,6 +420,9 @@ static void invalidate_stale_info_cache(const char *info_dir, const char *our_in
  * produces a hard error for the player, and it is cheaper to not create the
  * shim than to detect that later.
  */
+static void install_info_file(const char *self_dir, const char *self_base,
+                              const char *core_base);
+
 static bool copy_file(const char *src, const char *dst)
 {
     FILE *in = fopen(src, "rb");
@@ -508,7 +514,20 @@ static void replicate_for_listed_cores(const char *self_dir, const char *self_ba
             made++;
         } else {
             LOGE("  could not install %s", target);
+            continue;
         }
+
+        /*
+         * And its .info, now rather than on that core's first launch.
+         *
+         * A shim without one is the save-state failure all over again -
+         * RetroArch reads savestate support out of the .info and never asks the
+         * core - and it would land on every console the first time it was
+         * played, healing itself only on the launch after. Copying it here
+         * means each console works properly the first time.
+         */
+        const char *target_base = strrchr(target, '/');
+        install_info_file(self_dir, target_base ? target_base + 1 : target, line);
     }
     fclose(f);
     if (made) LOGI("replicated into %d core name(s), %d skipped", made, skipped);
@@ -619,12 +638,25 @@ static void install_info_file(const char *self_dir, const char *self_base,
 
     FILE *out = fopen(dst, "r");
     if (out) {
-        fseek(out, 0, SEEK_END);
-        long sz = ftell(out);
+        /* Ours already, unless it predates the display_name tag - in which case
+         * it is still ours and still wrong, so it gets rewritten. Overwriting
+         * is safe by construction here: this path only ever names a file ending
+         * in _shim_libretro.info, which no real core can be called. */
+        char probe[1024];
+        bool tagged = false;
+        while (fgets(probe, sizeof(probe), out)) {
+            if (strncmp(probe, "display_name", 12) == 0 && strstr(probe, INFO_TAG)) {
+                tagged = true;
+                break;
+            }
+        }
         fclose(out);
-        LOGI("%s already exists (%ld bytes), leaving it alone", dst, sz);
-        invalidate_stale_info_cache(info_dir, dst);
-        return;
+        if (tagged) {
+            LOGI("%s already exists and is tagged, leaving it alone", dst);
+            invalidate_stale_info_cache(info_dir, dst);
+            return;
+        }
+        LOGI("%s predates the display_name tag, rewriting it", dst);
     }
 
     FILE *in = fopen(src, "r");
@@ -641,19 +673,42 @@ static void install_info_file(const char *self_dir, const char *self_base,
         return;
     }
 
-    char   buf[4096];
-    size_t n, total = 0;
-    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
-        if (fwrite(buf, 1, n, out) != n) {
-            LOGE("short write to %s", dst);
-            break;
+    /*
+     * Copied line by line rather than byte for byte, to change exactly one
+     * thing: display_name.
+     *
+     * Everything else has to stay identical - corename and the savestate keys
+     * are how RetroArch decides which options, saves and features belong to
+     * this core, and matching the real one is the entire point. But
+     * display_name is only the label in the core list, and leaving it identical
+     * put two entries called "Nintendo - Game Boy Advance (VBA-M)" side by side
+     * with no way to tell which was which. Someone following a setup guide
+     * cannot pick the right one out of that.
+     */
+    char   line[1024];
+    size_t total = 0;
+    while (fgets(line, sizeof(line), in)) {
+        char       *tag = NULL;
+        const char *quote = NULL;
+        if (strncmp(line, "display_name", 12) == 0 && !strstr(line, INFO_TAG)) {
+            quote = strrchr(line, '"');
         }
-        total += n;
+        if (quote) {
+            size_t head = (size_t)(quote - line);
+            fwrite(line, 1, head, out);
+            fputs(INFO_TAG, out);
+            fputs(quote, out);
+            total += head + strlen(INFO_TAG) + strlen(quote);
+        } else {
+            fputs(line, out);
+            total += strlen(line);
+        }
+        (void)tag;
     }
     fclose(in);
     fclose(out);
-    LOGI("wrote %s (%zu bytes copied from %s) - save states need one more "
-         "launch, RetroArch builds its info list before loading any core",
+    LOGI("wrote %s (%zu bytes from %s, display_name tagged) - save states need "
+         "one more launch, RetroArch builds its info list before loading a core",
          dst, total, src);
     invalidate_stale_info_cache(info_dir, dst);
 }

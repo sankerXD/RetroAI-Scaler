@@ -236,7 +236,7 @@
     <string name="shim_status_none">Not set up yet — press “How to set it up”</string>
     <string name="toast_launch_restored">Put %1$d launch entries back. Reload the library in your frontend.</string>
     <string name="shim_guide_title">One-time setup</string>
-    <string name="shim_guide_body">In RetroArch:\n\n1. Load Core → Install or Restore a Core\n2. Pick the file at:\n%1$s\n3. Load Core again and select the core you just installed\n\nThen come back here and press “2 · Update the launcher”.\n\nIf a game ever fails to start, press “Undo”.</string>
+    <string name="shim_guide_body">In RetroArch:\n\n1. Load Core → Install or Restore a Core\n2. Pick the file at:\n%1$s\n3. Load Core again and pick the entry marked (RetroAI)\n\nThen come back here and press “2 · Update the launcher”.\n\nIf a game ever fails to start, press “Undo”.</string>
     <string name="reload_notice_title">Reload your library</string>
     <string name="reload_notice_body">Updated %1$d launch entries.\n\nNow go to your launcher and reload the library — in Pegasus that is Settings → Reload. Restarting it is not enough, it only rescans when told to.\n\nIf you are on the original Pegasus rather than a fork, ignore this: it rescans by itself at every start.</string>
     <string name="shim_guide_ok">Got it</string>
