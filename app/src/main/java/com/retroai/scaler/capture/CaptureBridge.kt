@@ -50,6 +50,9 @@ class CaptureBridge(
      */
     override val frameStallTimeoutMs: Long = 10_000L
 
+    /** Four seconds with nothing at all means the mirror never started. */
+    override val firstFrameTimeoutMs: Long = 4000L
+
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var captureThread: HandlerThread? = null

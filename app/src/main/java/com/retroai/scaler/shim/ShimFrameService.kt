@@ -570,7 +570,7 @@ class ShimFrameService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.shim_link_title))
+            .setContentTitle(getString(R.string.shim_setup_title))
             .setContentText(getString(R.string.shim_link_notification))
             .setSmallIcon(R.mipmap.ic_launcher)
             .setPriority(NotificationCompat.PRIORITY_LOW)

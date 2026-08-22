@@ -226,22 +226,19 @@
     -->
     <string name="toast_shim_hw_core">This emulator core draws on the GPU, so taking the picture directly from it is not possible. Use “Start AI enhancement” instead — that route works with any core.</string>
     <string name="toast_shim_no_frames">No picture arrived from the emulator. Check that the companion core is installed in RetroArch and that the game was started with it.</string>
-    <string name="shim_link_title">Take the picture straight from the emulator</string>
-    <string name="shim_link_hint">Instead of recording the screen, the picture is taken from inside the emulator. That is what makes true full screen possible: RetroArch no longer has to be shrunk into a corner. Needs a companion core installed in RetroArch first, and does not work with consoles the emulator draws on the GPU (PS1, N64).</string>
-    <string name="shim_setup_guide">How to set it up</string>
+    <string name="shim_setup_title">First-time setup</string>
+    <string name="shim_setup_guide">Setup instructions</string>
     <string name="shim_restore">Undo all changes</string>
     <string name="shim_use_capture">Use screen recording instead</string>
     <string name="shim_status">%1$d of %2$d consoles are set up</string>
     <string name="shim_status_none">Not set up yet — press “How to set it up”</string>
     <string name="toast_launch_restored">Put %1$d launch entries back. Reload the library in your frontend.</string>
     <string name="shim_guide_title">One-time setup</string>
-    <string name="shim_guide_body">1. Open RetroArch\n2. Load Core → Install or Restore a Core\n3. Pick the file at:\n%1$s\n\nThen start any game once. Everything after that happens on its own — the remaining consoles are set up as you play them.\n\nIf a game does not start afterwards, press “Undo all changes”.</string>
+    <string name="shim_guide_body">1. Open RetroArch\n2. Load Core → Install or Restore a Core\n3. Pick the file at:\n%1$s\n\nThat is all. Come back here when it is done.\n\nIf a game ever fails to start afterwards, press “Undo all changes”.</string>
     <string name="shim_guide_ok">Got it</string>
     <string name="shim_guide_body_restore">Every launch entry goes back to the emulator core it named before. Games keep working either way — this just turns the enhancement off at the source.\n\nReload the library in your frontend afterwards.</string>
     <string name="shim_link_stop">Disconnect</string>
     <string name="shim_link_dump">Dump next frame</string>
-    <string name="shim_link_render">Render full screen</string>
-    <string name="shim_link_stop_render">Stop rendering</string>
     <string name="shim_link_idle">Not running.</string>
     <string name="shim_link_notification">Waiting for the emulator</string>
 </resources>

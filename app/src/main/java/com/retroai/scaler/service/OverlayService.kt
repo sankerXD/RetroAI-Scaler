@@ -234,7 +234,10 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             // stall detector interpret that as a broken pipeline.
             if (bridge != null && !bridge.isPaused) {
                 val now = SystemClock.elapsedRealtime()
-                if (bridge.renderedFrames == 0L && now - bridge.startedAtMs > FIRST_FRAME_TIMEOUT_MS) {
+                val firstFrameTimeout = bridge.firstFrameTimeoutMs
+                if (firstFrameTimeout > 0L &&
+                    bridge.renderedFrames == 0L &&
+                    now - bridge.startedAtMs > firstFrameTimeout) {
                     Log.e(TAG, "No frame ever reached the renderer - shutting down.")
                     nativeBridge.nativeClearOverlay()
                     // Two very different causes, so two different messages.

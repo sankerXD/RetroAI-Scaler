@@ -552,7 +552,13 @@ class MainActivity : AppCompatActivity() {
                 shimCoreCount = after.cores.size
                 shimConvertedCount = after.converted.size
                 Log.i(TAG, "launch sync: ${scan.cores.size} cores known, ${result.message}")
-                runOnUiThread { updateShimProbeUi() }
+                runOnUiThread {
+                    updateShimProbeUi()
+                    // Nothing set up means nothing works yet, and a button
+                    // someone has to notice is a worse way to say so than
+                    // simply saying it.
+                    if (shimConvertedCount == 0 && !isFinishing) showSetupGuide()
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "syncing the launch files failed", e)
             }

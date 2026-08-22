@@ -93,6 +93,75 @@
             </LinearLayout>
 
             <!--
+                Setup. Directly under the status card because it is the one
+                thing a new install needs doing, and irrelevant once done -
+                at which point it is just a line saying so.
+            -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/shim_setup_title"
+                    android:textColor="@color/primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnShimProbe"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="@string/shim_setup_guide"
+                        android:textColor="@color/primary"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnShimStart"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/shim_restore"
+                        android:textColor="@color/primary"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnShimDump"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/shim_use_capture"
+                        android:textColor="@color/primary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvShimProbe"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:fontFamily="monospace"
+                    android:text="@string/shim_link_idle"
+                    android:textColor="@color/text_secondary"
+                    android:textIsSelectable="true"
+                    android:textSize="10sp" />
+            </LinearLayout>
+            <!--
                 Console Card. Hidden in direct mode, where the frames carry
                 their own resolution and nothing has to be declared in advance -
                 see FloatingBallManager.adoptNativeSize. Kept in the layout
@@ -318,83 +387,6 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!--
-                The shim frame link. Developer tooling for now, so it sits
-                last; it becomes the ordinary frame source at gate 4 and this
-                card turns into a status readout rather than a control.
-            -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:background="@drawable/bg_card"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/shim_link_title"
-                    android:textColor="@color/primary"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:lineSpacingExtra="2dp"
-                    android:text="@string/shim_link_hint"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="11sp" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:orientation="horizontal">
-
-                    <Button
-                        android:id="@+id/btnShimProbe"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:text="@string/shim_setup_guide"
-                        android:textColor="@color/primary"
-                        android:textSize="12sp" />
-
-                    <Button
-                        android:id="@+id/btnShimStart"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/shim_restore"
-                        android:textColor="@color/primary"
-                        android:textSize="12sp" />
-
-                    <Button
-                        android:id="@+id/btnShimDump"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:layout_marginStart="8dp"
-                        android:text="@string/shim_use_capture"
-                        android:textColor="@color/primary"
-                        android:textSize="12sp" />
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tvShimProbe"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:fontFamily="monospace"
-                    android:text="@string/shim_link_idle"
-                    android:textColor="@color/text_secondary"
-                    android:textIsSelectable="true"
-                    android:textSize="10sp" />
-            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 

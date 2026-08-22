@@ -54,6 +54,23 @@ interface FrameSource {
      */
     val frameStallTimeoutMs: Long
 
+    /**
+     * How long to wait for the very FIRST frame before giving up, or 0 for
+     * never.
+     *
+     * Per source, because "no frames yet" means opposite things. A screen
+     * mirror that has produced nothing in four seconds is broken: the screen
+     * always has something on it, so frames arrive the instant it starts.
+     *
+     * The direct source has nothing to give until RetroArch has started, loaded
+     * a core and run it, which takes longer than four seconds on a launch and
+     * longer still when changing console - and it has nothing to give at all
+     * while the player is in the frontend rather than in a game, which is a
+     * perfectly ordinary state to sit in. Treating that as a dead pipeline
+     * killed the service mid-launch every time a game was opened.
+     */
+    val firstFrameTimeoutMs: Long
+
     fun pauseCapture()
 
     fun resumeCapture(): Boolean

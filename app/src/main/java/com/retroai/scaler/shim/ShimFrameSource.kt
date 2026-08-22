@@ -48,6 +48,12 @@ class ShimFrameSource(
      */
     override val frameStallTimeoutMs: Long = 250L
 
+    /**
+     * Never. Waiting for the emulator is what this source does between games,
+     * and there is no length of silence that means it has broken.
+     */
+    override val firstFrameTimeoutMs: Long = 0L
+
     @Volatile override var lastFrameAtMs: Long = 0L
         private set
     @Volatile override var startedAtMs: Long = 0L
