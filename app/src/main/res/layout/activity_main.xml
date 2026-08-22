@@ -92,9 +92,14 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- Console Card: picked here so pressing start can already write
-                 RetroArch's config and work out the output placement. -->
+            <!--
+                Console Card. Hidden in direct mode, where the frames carry
+                their own resolution and nothing has to be declared in advance -
+                see FloatingBallManager.adoptNativeSize. Kept in the layout
+                because the capture route still needs it.
+            -->
             <LinearLayout
+                android:id="@+id/cardConsole"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
@@ -354,7 +359,7 @@
                         style="@style/Widget.MaterialComponents.Button.TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
-                        android:text="@string/shim_link_start"
+                        android:text="@string/shim_setup_guide"
                         android:textColor="@color/primary"
                         android:textSize="12sp" />
 
@@ -364,7 +369,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
                         android:layout_marginStart="8dp"
-                        android:text="@string/shim_link_render"
+                        android:text="@string/shim_restore"
                         android:textColor="@color/primary"
                         android:textSize="12sp" />
 
@@ -374,7 +379,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
                         android:layout_marginStart="8dp"
-                        android:text="@string/shim_link_dump"
+                        android:text="@string/shim_use_capture"
                         android:textColor="@color/primary"
                         android:textSize="12sp" />
                 </LinearLayout>

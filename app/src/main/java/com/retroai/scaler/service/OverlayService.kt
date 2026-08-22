@@ -773,6 +773,19 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             @Suppress("DEPRECATION")
             val data = intent.getParcelableExtra<Intent>(EXTRA_PROJECTION_DATA)
             if (resultCode != 0 && data != null) {
+                // Screen capture arriving while the direct source is live is
+                // the GPU-core fallback being taken. Tear the old source down
+                // first: startCapturePipeline refuses to start while one
+                // exists, so without this the service would keep the direct
+                // source that has no frames to give and quietly ignore the
+                // projection the player just granted.
+                if (shimMode) {
+                    Log.i(TAG, "switching from the direct source to screen capture")
+                    frameSource?.pauseCapture()
+                    frameSource?.detachEglContext()
+                    stopFrameSource()
+                    shimMode = false
+                }
                 val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = mpManager.getMediaProjection(resultCode, data)
                 startCapturePipeline()
@@ -965,7 +978,14 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         if (frameSource != null || !isSurfaceReady) return
 
         if (shimMode) {
-            val source = ShimFrameSource(nativeBridge)
+            val source = ShimFrameSource(nativeBridge) { w, h ->
+                // Arrives on the frame thread; everything it touches - the
+                // profile, the renderer config, the geometry - belongs to the
+                // main thread.
+                mainHandler.post {
+                    if (floatingBallManager?.adoptNativeSize(w, h) == true) pushGeometry()
+                }
+            }
             source.start()
             shimSource = source
             pushGeometry()

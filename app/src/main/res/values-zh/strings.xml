@@ -186,7 +186,16 @@
     <string name="toast_shim_no_frames">没有收到模拟器传来的画面。请确认已在 RetroArch 里装好配套核心，并且是用它启动的游戏。</string>
     <string name="shim_link_title">直接从模拟器取画面</string>
     <string name="shim_link_hint">不录屏，直接从模拟器内部把画面取出来。这样才能做到真正的全屏——模拟器不用再被缩到屏幕一角。需要先在 RetroArch 里装一个配套核心；模拟器用 GPU 绘制的机种（PS1、N64）用不了。</string>
-    <string name="shim_link_start">连接模拟器</string>
+    <string name="shim_setup_guide">怎么设置</string>
+    <string name="shim_restore">撤销所有改动</string>
+    <string name="shim_use_capture">改用录屏模式</string>
+    <string name="shim_status">%1$d / %2$d 个机种已设置</string>
+    <string name="shim_status_none">还没设置——点【怎么设置】</string>
+    <string name="toast_launch_restored">已还原 %1$d 条启动项。请在前端里重新加载一次游戏库。</string>
+    <string name="shim_guide_title">一次性设置</string>
+    <string name="shim_guide_body">1. 打开 RetroArch\n2. 加载核心 → 安装和还原核心\n3. 选这个文件：\n%1$s\n\n然后随便进一次游戏。之后的事情会自己完成——你玩到哪个机种，哪个机种就设置好了。\n\n万一之后有游戏打不开，点【撤销所有改动】。</string>
+    <string name="shim_guide_ok">知道了</string>
+    <string name="shim_guide_body_restore">所有启动项都会改回原来的模拟器核心。两种状态下游戏都能正常玩，这一步只是从源头关掉增强。\n\n之后请在前端里重新加载一次游戏库。</string>
     <string name="shim_link_stop">断开连接</string>
     <string name="shim_link_dump">落盘下一帧</string>
     <string name="shim_link_render">全屏增强</string>

@@ -27,7 +27,14 @@ import java.util.concurrent.TimeUnit
  * same reason.
  */
 class ShimFrameSource(
-    private val nativeBridge: NativeBridge
+    private val nativeBridge: NativeBridge,
+    /**
+     * Reports the native resolution of the frames, first time and on every
+     * change. A console changes video mode at runtime - SFC between 256x224
+     * and 512x448, PS1 across several - and the resolution is what the
+     * renderer samples on, so following it is not cosmetic.
+     */
+    private val onNativeSize: (width: Int, height: Int) -> Unit
 ) : FrameSource {
 
     companion object {
@@ -54,6 +61,8 @@ class ShimFrameSource(
     private val handler = Handler(thread.looper)
 
     @Volatile private var running = true
+    private var reportedWidth = 0
+    private var reportedHeight = 0
 
     private val lock = Object()
     private var spare: ByteArray? = null
@@ -118,6 +127,12 @@ class ShimFrameSource(
             posted = false
         }
         if (buf == null || !running || isPaused) return
+
+        if (w != reportedWidth || h != reportedHeight) {
+            reportedWidth = w
+            reportedHeight = h
+            onNativeSize(w, h)
+        }
 
         if (nativeBridge.nativeProcessShimFrame(buf, w, h, pitch, format)) {
             lastFrameAtMs = SystemClock.elapsedRealtime()

@@ -6,6 +6,9 @@ import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.view.View
+import java.io.File
 import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
@@ -16,6 +19,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.retroai.scaler.detector.ForegroundAppMonitor
+import com.retroai.scaler.detector.PegasusConfigManager
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
 import com.retroai.scaler.ui.AppLanguage
@@ -49,6 +53,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnShimProbe: Button
     private lateinit var btnShimDump: Button
     private lateinit var btnShimStart: Button
+
+    /** Filled in by syncLaunchFiles, read by the status line. */
+    @Volatile private var shimCoreCount = 0
+    @Volatile private var shimConvertedCount = 0
     private lateinit var tvShimProbe: TextView
 
     private val foregroundMonitor by lazy { ForegroundAppMonitor(this) }
@@ -86,6 +94,7 @@ class MainActivity : AppCompatActivity() {
         checkHardwareCapabilities()
         updatePermissionButtons()
         healLeftoverRetroArchConfig()
+        syncLaunchFiles()
     }
 
     /**
@@ -182,36 +191,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // The console no longer has to be declared: direct mode reads the
+        // resolution out of the frames themselves.
+        findViewById<View>(R.id.cardConsole).visibility = View.GONE
+
         btnShimProbe = findViewById(R.id.btnShimProbe)
         btnShimDump = findViewById(R.id.btnShimDump)
         btnShimStart = findViewById(R.id.btnShimStart)
         tvShimProbe = findViewById(R.id.tvShimProbe)
-        btnShimProbe.setOnClickListener {
-            val intent = Intent(this, ShimFrameService::class.java)
-            if (ShimFrameService.isRunning) stopService(intent)
-            else ContextCompat.startForegroundService(this, intent)
-        }
-        btnShimStart.setOnClickListener {
-            if (OverlayService.isRunning) {
-                stopOverlayService()
-            } else if (!Settings.canDrawOverlays(this)) {
-                Toast.makeText(this, R.string.toast_grant_overlay_first, Toast.LENGTH_LONG).show()
-            } else {
-                // No projection consent dialog: shim mode never captures the
-                // screen, so there is nothing to ask for.
-                ContextCompat.startForegroundService(
-                    this,
-                    Intent(this, OverlayService::class.java)
-                        .putExtra(OverlayService.EXTRA_SHIM_MODE, true)
-                )
-            }
-        }
-        btnShimDump.setOnClickListener {
-            // Arms the receiver; the next frame to arrive is written out. Doing
-            // it this way rather than dumping "the current frame" means the
-            // file is always a whole frame that was never half-overwritten.
-            ShimFrameService.dumpRequested.set(true)
-        }
+        btnShimProbe.setOnClickListener { showSetupGuide() }
+        btnShimStart.setOnClickListener { confirmRestoreLaunchFiles() }
+        btnShimDump.setOnClickListener { requestStartCapturePipeline() }
     }
 
     /** The service can stop itself while this Activity stays resumed (floating
@@ -224,48 +214,54 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showSetupGuide() {
+        val target = File(
+            Environment.getExternalStorageDirectory(),
+            "RetroAIScaler/cores/vbam_shim_libretro_android.so"
+        )
+        // Written out where the guide points, so the instruction is true by the
+        // time anyone follows it.
+        Thread {
+            runCatching {
+                target.parentFile?.mkdirs()
+                assets.open("shim/vbam_shim_libretro_android.so").use { input ->
+                    target.outputStream().use { input.copyTo(it) }
+                }
+            }.onFailure { Log.w(TAG, "could not stage the shim core", it) }
+        }.apply { isDaemon = true }.start()
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.shim_guide_title)
+            .setMessage(getString(R.string.shim_guide_body, target.absolutePath))
+            .setPositiveButton(R.string.shim_guide_ok, null)
+            .show()
+    }
+
+    private fun confirmRestoreLaunchFiles() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.shim_restore)
+            .setMessage(getString(R.string.shim_guide_body_restore))
+            .setPositiveButton(R.string.shim_restore) { _, _ -> restoreLaunchFiles() }
+            .setNegativeButton(R.string.btn_cancel, null)
+            .show()
+    }
+
     /** The link runs on its own threads, so the only way this Activity learns
      *  anything about it is to look. */
     private fun updateShimProbeUi() {
-        btnShimProbe.setText(
-            if (ShimFrameService.isRunning) R.string.shim_link_stop
-            else R.string.shim_link_start
-        )
-        btnShimDump.isEnabled = ShimFrameService.connected
-        btnShimStart.setText(
-            if (OverlayService.isRunning) R.string.shim_link_stop_render
-            else R.string.shim_link_render
-        )
-        btnShimStart.isEnabled = ShimFrameService.isRunning
+        // Only offered when it is the answer to something: a core that draws
+        // on the GPU is the one case direct mode cannot serve.
+        btnShimDump.visibility =
+            if (ShimFrameService.hardwareRenderedCore) View.VISIBLE else View.GONE
 
-        val lines = ShimFrameService.transcript
-        if (lines.isEmpty()) {
-            tvShimProbe.text = getString(R.string.shim_link_idle)
-            return
+        val converted = shimConvertedCount
+        val total = shimCoreCount
+        btnShimStart.isEnabled = converted > 0
+        tvShimProbe.text = when {
+            total == 0 -> getString(R.string.shim_link_idle)
+            converted == 0 -> getString(R.string.shim_status_none)
+            else -> getString(R.string.shim_status, converted, total)
         }
-
-        val frames = ShimFrameService.framesReceived.get()
-        val format = when (ShimFrameService.lastFormat) {
-            0 -> "0RGB1555"
-            1 -> "XRGB8888"
-            2 -> "RGB565"
-            else -> "-"
-        }
-        val mib = ShimFrameService.bytesReceived.get() / (1024.0 * 1024.0)
-        val stats = buildString {
-            append(if (ShimFrameService.connected) "link UP" else "link down")
-            append("  frames=").append(frames)
-            append("  %.2f fps".format(ShimFrameService.measuredFps))
-            append("  10s %.2f".format(ShimFrameService.averageFps))
-            append("\n")
-            append(ShimFrameService.lastWidth).append("x").append(ShimFrameService.lastHeight)
-            append("  pitch=").append(ShimFrameService.lastPitch)
-            append("  ").append(format)
-            append("  rot=").append(ShimFrameService.lastRotation)
-            append("  %.1f MiB".format(mib))
-            ShimFrameService.lastDumpPath?.let { append("\ndumped ").append(it) }
-        }
-        tvShimProbe.text = (lines.takeLast(10) + stats).joinToString("\n")
     }
 
     override fun onResume() {
@@ -471,12 +467,45 @@ class MainActivity : AppCompatActivity() {
         tvDeviceInfo.text = "SoC: ${android.os.Build.HARDWARE} | CPU Cores: $cores | ABI: $abi"
     }
 
+    /**
+     * Starts enhancement the direct way: frames from inside the emulator.
+     *
+     * This is now what the main button does, and screen capture is no longer a
+     * mode the player picks. The capture route still exists and is still the
+     * only one that works for cores that draw on the GPU, so it is reachable -
+     * but as an exception offered when it is needed, not as a choice to be
+     * understood up front.
+     */
     private fun requestStartPipeline() {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, R.string.toast_grant_overlay_first, Toast.LENGTH_SHORT).show()
             return
         }
+        if (!ShimFrameService.isRunning) {
+            ContextCompat.startForegroundService(this, Intent(this, ShimFrameService::class.java))
+        }
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, OverlayService::class.java)
+                .putExtra(OverlayService.EXTRA_SHIM_MODE, true)
+        )
+    }
 
+    /**
+     * The screen-capture route, for cores the shim cannot see into.
+     *
+     * Cannot be offered automatically: capture needs the projection consent
+     * dialog, and only an Activity can show one - which is exactly why the
+     * service can do no more than say which button to press.
+     */
+    private fun requestStartCapturePipeline() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, R.string.toast_grant_overlay_first, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (ShimFrameService.isRunning) {
+            stopService(Intent(this, ShimFrameService::class.java))
+        }
         val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         screenCaptureLauncher.launch(mpManager.createScreenCaptureIntent())
     }
@@ -495,5 +524,56 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopOverlayService() {
         stopService(Intent(this, OverlayService::class.java))
+        stopService(Intent(this, ShimFrameService::class.java))
+    }
+
+    /**
+     * Brings the frontend's launch lines up to date with the shims that exist.
+     *
+     * Runs on every start rather than as a "finish setup" step the player has
+     * to find. The shim can only replicate itself while RetroArch is running,
+     * so coverage grows one launch at a time: convert what is installed now,
+     * publish the full list of cores this device uses, and the next time a game
+     * runs the shim fills in the rest. Nobody is told to come back and press
+     * anything - more consoles simply start being enhanced.
+     */
+    private fun syncLaunchFiles() {
+        Thread {
+            try {
+                val manager = PegasusConfigManager()
+                val scan = manager.scan()
+                if (scan.files.isEmpty()) {
+                    Log.i(TAG, "no frontend launch files found - nothing to sync")
+                    return@Thread
+                }
+                manager.writeCoresList(scan.cores)
+                val result = manager.applyShim()
+                val after = manager.scan()
+                shimCoreCount = after.cores.size
+                shimConvertedCount = after.converted.size
+                Log.i(TAG, "launch sync: ${scan.cores.size} cores known, ${result.message}")
+                runOnUiThread { updateShimProbeUi() }
+            } catch (e: Exception) {
+                Log.w(TAG, "syncing the launch files failed", e)
+            }
+        }.apply { name = "LaunchSync"; isDaemon = true }.start()
+    }
+
+    /** Puts every launch line back to its real core. */
+    private fun restoreLaunchFiles() {
+        Thread {
+            val result = runCatching { PegasusConfigManager().restore() }
+                .getOrElse { PegasusConfigManager.Result(0, 0, it.message ?: "failed") }
+            shimConvertedCount = 0
+            Log.i(TAG, "launch restore: ${result.message}")
+            runOnUiThread {
+                Toast.makeText(
+                    this,
+                    getString(R.string.toast_launch_restored, result.changed),
+                    Toast.LENGTH_LONG
+                ).show()
+                updateShimProbeUi()
+            }
+        }.apply { name = "LaunchRestore"; isDaemon = true }.start()
     }
 }

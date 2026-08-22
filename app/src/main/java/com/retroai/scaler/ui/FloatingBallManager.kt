@@ -9,6 +9,7 @@ import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -40,6 +41,7 @@ class FloatingBallManager(
     private val onServiceStopRequested: () -> Unit
 ) {
     companion object {
+        private const val TAG = "FloatingBall"
         private const val AUTO_HIDE_DELAY_MS = 3500L
         private const val BALL_SIZE_PX = 56
 
@@ -95,6 +97,19 @@ class FloatingBallManager(
     private var lastCaptureMessage: String? = null
 
     var profile: RenderProfile = ProfilePreference.load(context)
+
+    /**
+     * The real native resolution of the frames arriving, when we know it.
+     *
+     * With screen capture the player had to declare the console, because the
+     * whole viewport rewrite was computed from it before RetroArch ever drew
+     * anything. Frames from the emulator carry their own size, so this is
+     * measured instead of declared - and it has to be, because this number is
+     * uNativeRes: get it wrong and every engine samples off-grid and the
+     * picture goes soft, which is the same failure AGENT.md §10.1 describes
+     * from the other direction.
+     */
+    private var nativeSizeOverride: Pair<Int, Int>? = null
         private set
 
     // Views
@@ -189,6 +204,45 @@ class FloatingBallManager(
      * Called by the service once the native renderer exists (model loading and
      * config pushes are no-ops before nativeInit).
      */
+    /**
+     * Takes the native resolution from the frames themselves.
+     *
+     * Where the size matches a console we know, its saved settings are loaded
+     * too, so switching from Game Boy to Mega Drive brings that console's mask
+     * and scanline choices with it - the per-console profiles keep working
+     * without anyone having to pick from a list.
+     *
+     * Switching at runtime is refused in capture mode for a reason that does
+     * not apply here: there, the console determined a viewport rewritten into
+     * RetroArch's config and only read at content load, so changing it mid-run
+     * left RetroArch drawing for the previous console. Direct mode writes no
+     * config at all, so following the frames is simply correct.
+     *
+     * A size we do not recognise - most arcade boards, and any console not in
+     * the six-entry list - still gets the right uNativeRes and keeps whatever
+     * profile is current. That is a strictly better answer than the capture
+     * path could give, where an unlisted console could not be played at all.
+     */
+    fun adoptNativeSize(width: Int, height: Int): Boolean {
+        if (width <= 0 || height <= 0) return false
+        if (nativeSizeOverride == (width to height)) return false
+        nativeSizeOverride = width to height
+
+        val matched = ConsoleType.entries.firstOrNull {
+            it.nativeWidth == width && it.nativeHeight == height
+        }
+        if (matched != null && matched != profile.console) {
+            ProfilePreference.setConsole(context, matched)
+            profile = ProfilePreference.load(context)
+            Log.i(TAG, "frames are ${width}x$height - switched to ${matched.name}")
+        } else {
+            Log.i(TAG, "frames are ${width}x$height" +
+                if (matched == null) " (no console matches; keeping ${profile.console.name})" else "")
+        }
+        pushAllSettings()
+        return true
+    }
+
     fun pushAllSettings() {
         // The engine owns its effects, including across a restart: a profile
         // saved while the lighting was still a separate switch would otherwise
@@ -949,10 +1003,12 @@ class FloatingBallManager(
         nativeBridge.nativeSetHd2d(profile.hd2dEnabled, profile.hd2dStrength)
         nativeBridge.nativeSetDof(profile.dofStrength)
         nativeBridge.nativeSetBloom(profile.bloomStrength)
+        val (nativeW, nativeH) = nativeSizeOverride
+            ?: (profile.console.nativeWidth to profile.console.nativeHeight)
         nativeBridge.nativeSetRenderConfig(
             profile.isAiEnabled,
-            profile.console.nativeWidth,
-            profile.console.nativeHeight,
+            nativeW,
+            nativeH,
             profile.scanlineIntensity,
             profile.lcdGridIntensity
         )
