@@ -1,6 +1,18 @@
 # NewSolution.md — libretro shim core 路线设计书 **v2**
 
-> **状态：门 0 / 门 1 已通过，门 2 起未实施**（2026-08-20）
+> **状态：门 0 / 门 1 已通过并实测收口，门 2 已实现待真机验证**（2026-08-21）
+>
+> **2026-08-21 的三条更新，改了本文的结论，先读：**
+>
+> 1. **§4.4 的 Binder 方案已作废，改 loopback TCP。** 它的地基是从 native 拿
+>    JavaVM，而 `JNI_GetCreatedJavaVMs` 到 API 31 才进 NDK——安卓 11 上它在 ART
+>    APEX 里的 `libnativehelper.so`，应用的 linker namespace 打不开。那是整节
+>    §4.4 的前提，却从没被任何一道门验证过。**实测结论见门 1。**
+> 2. **门 0 的两项残留已答**：SD 卡上 `metadata.pegasus.txt` 所在目录
+>    create+rename+delete 全部放行；`auto_overrides_enable`（RA 菜单里叫
+>    「自动加载独立配置文件」，副标题"启动时加载自定义配置"）**是开的**——
+>    §3 末尾那条"我们写的覆盖配置可能从来没生效过"的怀疑，销案。
+> 3. **门 2 的 shim 已写完并编译通过**，见 `shim/`。
 >
 > 目标问题：Android 11 上屏幕捕获架构导致 RetroArch 画面缩到屏幕一角、RA 原始画面与 AI 增强画面同屏并存。3.5 寸机型上这个代价无法接受。
 >
@@ -367,18 +379,36 @@ libretro.h 随 `shim/` 目录 vendor 并注明出处。
 
 **结果**：核心在 `/data/data/com.retroarch.aarch64/cores/`，SELinux `execute` 放行；Pegasus 显式传 `-e LIBRETRO`；RA 菜单确认有「加载核心 → 安装和还原核心」。证据见 §3。
 
-**残留两项（下次开工时顺手做，各 5 分钟）**：
+**残留两项 ✅ 已答（2026-08-21）**：
 
-- [ ] 确认 APP 能写 SD 卡上的 `metadata.pegasus.txt`（`/storage/7C32-2F40/Roms/GBA/`）。写一个字节再改回来即可。
-- [ ] 确认 Pegasus 传的 `retroarch.cfg` 里 `auto_overrides_enable` 是不是 `true`（与 shim 无关，但会影响对现状的判断，见 §3 末尾的附带发现）。
+- [x] **SD 卡可写**。判据从"写一个字节再改回来"改成"**在同目录建临时文件 → 写 → 读回 → rename → 删**"：那才是 §5.4 原子替换真正需要的能力（允许 create 却拒绝 rename 的卷会在第一次写坏用户启动文件时才暴露），而且**全程不碰 `metadata.pegasus.txt` 本身**——为了测"能不能写"去写用户的启动文件，赌的是他们唯一真正感受得到的故障。内置存储和 SD 卡两份全部 `YES`。
+- [x] **`auto_overrides_enable` = 开**。RA 中文菜单里它叫**「自动加载独立配置文件」**，认它的是副标题"启动时加载自定义配置。"（英文 *Load customized configuration at startup*）；底下那条"自动加载重映射文件"是 `auto_remaps_enable`，别认错。**所以现有的视口覆盖配置一直是生效的**，§3 末尾那条附带发现销案。
 
-### 门 1 — IPC 通道 ✅ 已定案（2026-08-20）
+### 门 1 — IPC 通道 ✅ 已实测通过（2026-08-21，Air Mini / Android 11）
 
 **目的**：确认 shim ↔ APP 用什么通道。
 
-**结果**：由 E4，abstract socket 方案**否决**（域不同 + MLS 分类逐应用不同）。改用 **Binder + ParcelFileDescriptor + ASharedMemory**，见 §4.4。
+**结果：loopback TCP，双向都通。** abstract / 文件系统 unix socket 仍然否决（E4：域不同 + MLS 分类逐应用不同）；**Binder 方案一并否决**，理由是它的前提拿不到——见下。
 
-> 原计划是"两个玩具 APK 跑 15 分钟测试"。日志里的 `scontext=` 已经把答案给了，测试省掉了。**但如果 §4.4 的 Binder 路线在门 3 出现意外，回来重看这条**——那时才值得花那 15 分钟去确认 socket 是不是真的不通。
+**为什么不是 Binder**：§4.4 原方案第一步是 `JNI_GetCreatedJavaVMs()`。该符号**到 API 31 才进 NDK**；安卓 11 上它在 ART APEX 里的 `libnativehelper.so`，而那个库不在 `public.libraries.txt`，应用的 linker namespace 打不开。拿到 VM 之后还要反射 `ActivityThread.currentApplication()`——那一步能过是因为 RA 的 targetSdk ≤ 27 免疫 hidden-API 拦截，于是风险 #6 又多背一条。**整节 §4.4 站在一个从没被验证过的前提上。**
+
+**为什么 TCP 通**：SELinux 对 TCP 检查的是**端口类型上的 `name_connect`，不是对端的域**，也从不查逐应用的 MLS 分类——正是那两样杀死了 unix socket 方案。旁证是 RA 自带的 AI Service（`ai_service_url` 默认就是个 localhost URL）：同一个进程、同一个标签，官方功能。
+
+**怎么测的（判据是"真 RA 进程"，不是玩具 APK）**：玩具 APK 只能复现一个我们猜出来的域。所以让 APP 在 **RA 自己的 netplay 默认端口 55435** 上监听，测试者在 RA 里走 联机 → 连接到联机主机 → `127.0.0.1`。RA 于是做了 shim 要做的那一次 `socket()+connect()`，从生产进程、生产标签发起。
+
+实测：
+
+```
+ACCEPTED #1 from 127.0.0.1:48092
+  read 24 bytes
+  wrote 22 bytes back OK
+```
+
+RA 侧报"对方没有提供 RA 可用的版本"——**那正是成功的证据**：它读到了我们回写的字节并把它当版本号解析失败。收发双向都成立，`logcat` 里没有任何 `avc: denied`。
+
+**由此定下的通道**：APP 侧 `ServerSocket` 绑 `127.0.0.1`（**永不绑通配地址**），shim 侧纯 C `socket()/connect()`。**零 JNI、零反射、零 AIDL、零 ASharedMemory**，风险 #5 整条消失。代价两条，都认：多一次内核拷贝（GBA 240×160 RGB565 = 77KB/帧 × 60 = 4.6MB/s，loopback 是 GB/s 级，无所谓）；**APP 要加 `INTERNET` 权限**（RA 已有）——一个离线画质增强 APP 申请网络权限观感不好，只能靠"仅绑回环"和文档解释。
+
+> 端口发现走 E5 的兜底通道：APP 把端口和 token 写进 `/storage/emulated/0/RetroAIScaler/shim/`，shim 加载时读一次。**该目录名无连字符**，跟 `backups/`、`dataset/` 一致。
 
 ### 门 2 — 纯透传 shim（原 Milestone A）
 

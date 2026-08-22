@@ -63,7 +63,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * five minutes (they are the residual items on gate 0):
  *  - whether this app can create/rename/delete inside the directories holding
  *    Pegasus' metadata.pegasus.txt, on internal storage AND on the SD card;
- *  - a marker file under /storage/emulated/0/RetroAI-Scaler/, so the tester can
+ *  - a marker file under /storage/emulated/0/RetroAIScaler/shim/, so the tester can
  *    confirm from RetroArch's own file browser that RetroArch can read the
  *    directory the production build would use to publish its port and token.
  *
@@ -228,7 +228,10 @@ class ShimProbeService : Service() {
 
         // Marker file, so RetroArch's own file browser can be pointed at it.
         try {
-            val dir = File(Environment.getExternalStorageDirectory(), "RetroAI-Scaler")
+            // RetroAIScaler, no hyphen: that is what backups/ and dataset/
+            // already use. A second near-identical directory in the root of a
+            // user's storage is litter, and the two would drift.
+            val dir = File(Environment.getExternalStorageDirectory(), "RetroAIScaler/shim")
             dir.mkdirs()
             val marker = File(dir, "shim-probe.txt")
             val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
