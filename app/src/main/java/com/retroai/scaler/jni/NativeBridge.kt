@@ -19,6 +19,22 @@ class NativeBridge {
     external fun nativeProcessHardwareBuffer(buffer: HardwareBuffer): Boolean
 
     /**
+     * The libretro shim's frame path: native-resolution CPU pixels straight
+     * from the emulator core, never through the screen compositor.
+     *
+     * [pixelFormat] is the libretro value (0 = 0RGB1555, 1 = XRGB8888,
+     * 2 = RGB565) and [pitch] is bytes per row in [data]. Conversion and the
+     * AHardwareBuffer pool live on the native side so that everything
+     * downstream - renderer, shaders, AI - sees exactly what the capture path
+     * produces.
+     *
+     * Must be called on the thread that owns the EGL context.
+     */
+    external fun nativeProcessShimFrame(
+        data: ByteArray, width: Int, height: Int, pitch: Int, pixelFormat: Int
+    ): Boolean
+
+    /**
      * Source = the small 1x RetroArch window we sample from.
      * Output = where the enhanced image is painted.
      * They must not overlap: the source rect is punched out of the output so
@@ -29,7 +45,14 @@ class NativeBridge {
         outX: Int, outY: Int, outW: Int, outH: Int,
         showSourceGuide: Boolean,
         /** False under single-app capture: the output may cover the source. */
-        protectSource: Boolean
+        protectSource: Boolean,
+        /**
+         * Paints outside the output rect opaque black instead of transparent.
+         * True only with the shim, where RetroArch still draws full screen
+         * underneath and anything left transparent shows its unenhanced
+         * picture through as a border.
+         */
+        letterboxOpaque: Boolean
     )
 
     external fun nativeSetRenderConfig(

@@ -9,12 +9,14 @@
 #include "common/cpu_affinity.h"
 #include "capture/hw_buffer_reader.h"
 #include "capture/frame_cropper.h"
+#include "capture/shim_buffer_pool.h"
 #include "render/gl_renderer.h"
 
 using namespace retroai;
 
 static std::unique_ptr<GlRenderer> gRenderer = nullptr;
 static std::unique_ptr<HwBufferReader> gHwBufferReader = nullptr;
+static ShimBufferPool gShimPool;
 static std::unique_ptr<FrameCropper> gFrameCropper = nullptr;
 static std::mutex gPipelineMutex;
 
@@ -197,6 +199,82 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeProcessHardwareBuffer(
     return success ? JNI_TRUE : JNI_FALSE;
 }
 
+/**
+ * The libretro shim's frame path.
+ *
+ * Same tail as nativeProcessHardwareBuffer - same mutex, same EGL context,
+ * same renderer, same stats - with the CPU pixels turned into an
+ * AHardwareBuffer first. Everything downstream, including every shader, sees
+ * exactly what the capture path produces, which is what lets the two frame
+ * sources coexist while HW-rendering cores still need capture (§9).
+ *
+ * Called from the frame-source thread, which owns the EGL context; never from
+ * the main thread. Holding gPipelineMutex across a whole GPU frame is fine
+ * here and forbidden there (AGENT.md §10.3a).
+ */
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_retroai_scaler_jni_NativeBridge_nativeProcessShimFrame(
+    JNIEnv* env,
+    jobject /* this */,
+    jbyteArray dataArr,
+    jint width,
+    jint height,
+    jint pitch,
+    jint pixelFormat
+) {
+    if (!gPipelineActive.load() || !dataArr) {
+        return JNI_FALSE;
+    }
+
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    if (!gRenderer || !gHwBufferReader) {
+        return JNI_FALSE;
+    }
+
+    if (!gRenderer->ensureEglContextCurrent()) {
+        static int eglFailCount = 0;
+        if (++eglFailCount % 60 == 1) {
+            ALOGE("nativeProcessShimFrame: ensureEglContextCurrent failed!");
+        }
+        return JNI_FALSE;
+    }
+
+    jbyte* raw = env->GetByteArrayElements(dataArr, nullptr);
+    if (!raw) {
+        return JNI_FALSE;
+    }
+    AHardwareBuffer* hwBuffer = gShimPool.fill(
+        reinterpret_cast<const uint8_t*>(raw), width, height, pitch, pixelFormat);
+    // JNI_ABORT: we only ever read from it, so there is nothing to copy back.
+    env->ReleaseByteArrayElements(dataArr, raw, JNI_ABORT);
+
+    if (!hwBuffer) {
+        gRenderer->clearOverlay();
+        return JNI_FALSE;
+    }
+
+    int frameW = 0, frameH = 0;
+    GLuint texId = gHwBufferReader->bindHardwareBufferToTexture(hwBuffer, frameW, frameH);
+    if (texId == 0) {
+        static int bindFailCount = 0;
+        if (++bindFailCount % 60 == 1) {
+            ALOGE("nativeProcessShimFrame: bindHardwareBufferToTexture failed!");
+        }
+        gRenderer->clearOverlay();
+        return JNI_FALSE;
+    }
+
+    bool success = gRenderer->renderFrame(texId, frameW, frameH);
+    publishStats(gRenderer->getStats(), gRenderer->aiBackend());
+    static int shimFrameLog = 0;
+    if (++shimFrameLog % 300 == 1) {
+        ALOGI("shim frame #%d rendered success=%d paused=%d (%dx%d fmt=%d)",
+              shimFrameLog, success, gRenderer->isPaused() ? 1 : 0,
+              frameW, frameH, pixelFormat);
+    }
+    return success ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL
 Java_com_retroai_scaler_jni_NativeBridge_nativeSetGeometry(
     JNIEnv* /* env */,
@@ -204,7 +282,8 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeSetGeometry(
     jint srcX, jint srcY, jint srcW, jint srcH,
     jint outX, jint outY, jint outW, jint outH,
     jboolean showSourceGuide,
-    jboolean protectSource
+    jboolean protectSource,
+    jboolean letterboxOpaque
 ) {
     std::lock_guard<std::mutex> lock(gPipelineMutex);
     if (gRenderer) {
@@ -214,6 +293,7 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeSetGeometry(
             showSourceGuide == JNI_TRUE,
             protectSource == JNI_TRUE
         );
+        gRenderer->setLetterboxOpaque(letterboxOpaque == JNI_TRUE);
     }
 }
 
@@ -589,6 +669,7 @@ Java_com_retroai_scaler_jni_NativeBridge_nativeRelease(
         // Last frame must be transparent so nothing is left covering the screen.
         gRenderer->clearOverlay();
     }
+    gShimPool.release();
     if (gHwBufferReader) {
         gHwBufferReader->release();
         gHwBufferReader = nullptr;

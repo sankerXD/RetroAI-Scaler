@@ -28,6 +28,9 @@ import androidx.core.app.NotificationCompat
 import com.retroai.scaler.MainActivity
 import com.retroai.scaler.R
 import com.retroai.scaler.capture.CaptureBridge
+import com.retroai.scaler.capture.FrameSource
+import com.retroai.scaler.shim.ShimFrameService
+import com.retroai.scaler.shim.ShimFrameSource
 import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
@@ -119,6 +122,8 @@ class OverlayService : Service(), SurfaceHolder.Callback {
          */
         private const val PASSTHROUGH_ALPHA = 0.5f
 
+        /** Start with the libretro shim as the frame source, not the screen. */
+        const val EXTRA_SHIM_MODE = "extra_shim_mode"
         const val EXTRA_PROJECTION_DATA = "extra_projection_data"
         const val EXTRA_PROJECTION_RESULT_CODE = "extra_projection_result_code"
         const val ACTION_OPEN_MENU = "com.retroai.scaler.ACTION_OPEN_MENU"
@@ -148,6 +153,25 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     private var isRecreatingOverlay = false
     private var floatingBallManager: FloatingBallManager? = null
     private var captureBridge: CaptureBridge? = null
+    private var shimSource: ShimFrameSource? = null
+
+    /**
+     * Whichever source is live. The watchdog, the pause/resume path and the GL
+     * teardown all go through this and must not know which one it is.
+     */
+    private val frameSource: FrameSource?
+        get() = shimSource ?: captureBridge
+
+    /**
+     * Shim mode: frames come from inside RetroArch, not from the screen.
+     *
+     * Everything the capture architecture needed in order to keep the sampled
+     * region and the painted region apart stops applying (AGENT.md §1), so
+     * this flag turns off the viewport rewrite, the viewport detection, the
+     * integer snapping and the capture-mode probe in one place rather than
+     * leaving each of them to work out that it has nothing to do.
+     */
+    private var shimMode = false
     private var mediaProjection: MediaProjection? = null
 
     private var foregroundMonitor: ForegroundAppMonitor? = null
@@ -183,7 +207,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      */
     private val watchdogRunnable = object : Runnable {
         override fun run() {
-            val bridge = captureBridge
+            val bridge = frameSource
             // A paused pipeline produces no frames by design - do not let the
             // stall detector interpret that as a broken pipeline.
             if (bridge != null && !bridge.isPaused) {
@@ -200,12 +224,17 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                     return
                 }
 
+                // The threshold belongs to the source, not to the watchdog:
+                // for a screen mirror this long a silence is a fault, for the
+                // shim it is RetroArch's menu being open and the overlay has to
+                // get out of the way fast enough to be usable (§4.7).
+                val stallMs = bridge.frameStallTimeoutMs
                 val idleMs = now - bridge.lastFrameAtMs
-                if (idleMs > FRAME_STALL_TIMEOUT_MS && !isOverlayCleared) {
-                    Log.w(TAG, "No frame for ${idleMs}ms - wiping overlay transparent.")
+                if (idleMs > stallMs && !isOverlayCleared) {
+                    if (!shimMode) Log.w(TAG, "No frame for ${idleMs}ms - wiping overlay transparent.")
                     nativeBridge.nativeClearOverlay()
                     isOverlayCleared = true
-                } else if (idleMs <= FRAME_STALL_TIMEOUT_MS) {
+                } else if (idleMs <= stallMs) {
                     isOverlayCleared = false
                 }
             }
@@ -294,6 +323,22 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * been opened in this session.
      */
     private fun applyConfigOnStart(manager: RetroArchConfigManager) {
+        /*
+         * Shim mode leaves RetroArch's config alone entirely.
+         *
+         * Every key this writes exists to serve screen capture: the custom
+         * viewport shrinks RetroArch into a corner so our output has somewhere
+         * to go that is not on top of what we are sampling, and
+         * video_shader_enable=false keeps RetroArch's own shaders out of the
+         * picture we sample. The shim takes the core's frame before either
+         * happens, so RetroArch can go back to drawing normally at whatever
+         * size and with whatever shader the player chose - and every key we do
+         * not write is one less thing to restore afterwards.
+         */
+        if (shimMode) {
+            Log.i(TAG, "shim mode - leaving RetroArch's config untouched")
+            return
+        }
         val profile = ProfilePreference.load(this)
         val folders = manager.coreFoldersFor(profile.console)
         if (folders.isEmpty()) {
@@ -375,6 +420,10 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * for the emulator to have drawn a real frame, not a black one.
      */
     private fun scheduleAutoDetect() {
+        // Nothing to measure in shim mode: the frame arrives at exactly its
+        // native resolution, so the rect this pass exists to recover is
+        // already known to the pixel.
+        if (shimMode) return
         val manager = floatingBallManager ?: return
         if (manager.profile.detectedSourceRect != null) return
         mainHandler.removeCallbacks(autoDetectRunnable)
@@ -501,6 +550,10 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     }
 
     private fun scheduleCaptureModeProbe() {
+        // The probe asks whether our own overlay lands in the captured frame.
+        // Nothing is captured from the screen in shim mode, so the question has
+        // no meaning and the marker it paints would only flash on screen.
+        if (shimMode) return
         if (captureModeProbeRequested) return
         captureModeProbeRequested = true
         // After the auto-detect window, so the two readback users never overlap.
@@ -553,6 +606,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * content load, hence the prompt.
      */
     private fun rewriteRetroArchConfigForCaptureMode() {
+        if (shimMode) return
         Thread {
             try {
                 val profile = floatingBallManager?.profile ?: return@Thread
@@ -607,15 +661,15 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         if (isRenderingActive && !awaitingRaRestart) {
             setOverlayObscuring(true)
             nativeBridge.nativeSetRenderPaused(false)
-            captureBridge?.resumeCapture()
+            frameSource?.resumeCapture()
         } else {
-            captureBridge?.pauseCapture()
+            frameSource?.pauseCapture()
             // The wipe runs ON the capture thread, where the EGL context
             // already is. Doing it from here instead means handing the context
             // across threads and back on every app switch, and after that
             // round trip the renderer kept reporting healthy frames that never
             // reached the screen.
-            val bridge = captureBridge
+            val bridge = frameSource
             val wiped = bridge?.runOnCaptureThread {
                 nativeBridge.nativeSetRenderPaused(true)
             } ?: false
@@ -650,6 +704,15 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 floatingBallManager?.showMenu()
                 return START_NOT_STICKY
             }
+        }
+
+        if (intent?.getBooleanExtra(EXTRA_SHIM_MODE, false) == true) {
+            // No MediaProjection is requested, granted, or needed. The frames
+            // come from inside RetroArch.
+            shimMode = true
+            Log.i(TAG, "Starting in shim frame-source mode - no screen capture.")
+            startCapturePipeline()
+            return START_NOT_STICKY
         }
 
         if (intent != null) {
@@ -777,19 +840,88 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     /** Pushes the current source/output geometry down to the renderer. */
     private fun pushGeometry() {
         val profile = floatingBallManager?.profile ?: return
+
+        if (shimMode) {
+            /*
+             * The whole of the capture geometry problem disappears here.
+             *
+             * Under MediaProjection the source rect had to be MEASURED out of a
+             * screenshot and snapped to an exact integer multiple of the native
+             * resolution, because two pixels of error accumulate into a
+             * one-texel drift by the bottom of the picture and every engine
+             * goes soft (AGENT.md §10.1). A shim frame IS the native
+             * resolution: the source rect is the whole buffer, exactly, with
+             * nothing to detect and nothing to snap.
+             *
+             * protectSource is false because the reason it existed is gone. It
+             * punched a hole in our own output so the next captured frame would
+             * not contain the previous one - self-feedback. Nothing here is
+             * captured from the screen, so there is no loop to break, and the
+             * output covers the whole display.
+             */
+            val out = outputRectForShim()
+            nativeBridge.nativeSetGeometry(
+                0, 0, shimFrameWidth, shimFrameHeight,
+                out.left, out.top, out.width(), out.height(),
+                false,
+                false,
+                true
+            )
+            return
+        }
+
         val src = profile.getSourceRect(screenWidth, screenHeight)
         val out = profile.getOutputRect(screenWidth, screenHeight)
         nativeBridge.nativeSetGeometry(
             src.left, src.top, src.width(), src.height(),
             out.left, out.top, out.width(), out.height(),
             profile.showSourceGuide,
-            profile.captureMode == CaptureMode.WHOLE_SCREEN
+            profile.captureMode == CaptureMode.WHOLE_SCREEN,
+            false
         )
     }
 
+    private val shimFrameWidth: Int
+        get() = ShimFrameService.lastWidth.takeIf { it > 0 }
+            ?: floatingBallManager?.profile?.console?.nativeWidth ?: 240
+    private val shimFrameHeight: Int
+        get() = ShimFrameService.lastHeight.takeIf { it > 0 }
+            ?: floatingBallManager?.profile?.console?.nativeHeight ?: 160
+
+    /**
+     * The largest whole multiple of the native resolution that fits the screen,
+     * centred.
+     *
+     * Integer, for the reason the capture path already records: a fractional
+     * scale means a game pixel does not land on a whole number of screen
+     * pixels, every pixel boundary gets interpolated, and the picture is soft.
+     * Centred, because with nothing to avoid there is nothing to bias towards.
+     */
+    private fun outputRectForShim(): android.graphics.Rect {
+        val nw = shimFrameWidth
+        val nh = shimFrameHeight
+        val k = maxOf(1, minOf(screenWidth / nw, screenHeight / nh))
+        val w = nw * k
+        val h = nh * k
+        val x = (screenWidth - w) / 2
+        val y = (screenHeight - h) / 2
+        return android.graphics.Rect(x, y, x + w, y + h)
+    }
+
     private fun startCapturePipeline() {
+        if (frameSource != null || !isSurfaceReady) return
+
+        if (shimMode) {
+            val source = ShimFrameSource(nativeBridge)
+            source.start()
+            shimSource = source
+            pushGeometry()
+            applyRenderingState()
+            Log.i(TAG, "Pipeline started on the libretro shim frame source.")
+            return
+        }
+
         val mp = mediaProjection ?: return
-        if (captureBridge != null || !isSurfaceReady) return
 
         val bridge = CaptureBridge(
             mp,
@@ -894,7 +1026,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         // Suspend delivery first: frames sized for the old screen must not
         // reach a renderer that is being rebuilt for the new one.
-        val bridge = captureBridge
+        val bridge = frameSource
         bridge?.pauseCapture()
 
         // nativeRelease() while the EGL context is still current on the capture
@@ -928,7 +1060,12 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         floatingBallManager?.pushAllSettings()
         pushGeometry()
 
-        if (bridge != null && !bridge.resizeTo(width, height, screenDensityDpi)) {
+        // Only the screen mirror is sized in screen pixels. A shim frame is
+        // its own native resolution whatever the panel is doing, so rotation
+        // changes nothing about the source - pushGeometry above has already
+        // recentred the OUTPUT, which is the only part that moved.
+        val mirror = captureBridge
+        if (mirror != null && !mirror.resizeTo(width, height, screenDensityDpi)) {
             Log.e(TAG, "capture resize failed after rotation - stopping.")
             Toast.makeText(this, R.string.toast_rotate_capture_failed, Toast.LENGTH_LONG).show()
             stopSelf()
@@ -952,15 +1089,24 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             // the VirtualDisplay, and rebuilding it means a second
             // createVirtualDisplay() on the same MediaProjection - which is
             // exactly what the resize path was written to avoid.
-            captureBridge?.pauseCapture()
-            captureBridge?.detachEglContext()
+            frameSource?.pauseCapture()
+            frameSource?.detachEglContext()
             nativeBridge.nativeRelease()
             return
         }
 
+        stopFrameSource()
+        nativeBridge.nativeRelease()
+    }
+
+    /** Tears down whichever source is live. Both are always cleared: only one
+     *  is ever set, but leaving a stale reference behind would let
+     *  startCapturePipeline() decide a pipeline is already running. */
+    private fun stopFrameSource() {
+        shimSource?.stopCapture()
+        shimSource = null
         captureBridge?.stopCapture()
         captureBridge = null
-        nativeBridge.nativeRelease()
     }
 
     /**
@@ -1101,8 +1247,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         // Order matters: stop producing frames, then wipe the overlay, then
         // tear down GL, then finally detach the window.
-        captureBridge?.stopCapture()
-        captureBridge = null
+        stopFrameSource()
         mediaProjection?.stop()
         mediaProjection = null
 

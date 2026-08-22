@@ -187,6 +187,8 @@
     <string name="shim_link_start">启动帧链路</string>
     <string name="shim_link_stop">停止帧链路</string>
     <string name="shim_link_dump">落盘下一帧</string>
+    <string name="shim_link_render">全屏增强</string>
+    <string name="shim_link_stop_render">停止增强</string>
     <string name="shim_link_idle">未运行。</string>
     <string name="shim_link_notification">正在回环地址上等帧</string>
 </resources>

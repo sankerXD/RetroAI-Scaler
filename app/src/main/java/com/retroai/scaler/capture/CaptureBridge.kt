@@ -30,7 +30,7 @@ class CaptureBridge(
     screenDensityDpi: Int,
     private val nativeBridge: NativeBridge,
     private val onProjectionStopped: () -> Unit
-) {
+) : FrameSource {
     // Mutable because the display can rotate under us: a portrait-native panel
     // swaps 1920x1080 <-> 1080x1920 and both the mirror and the reader have to
     // follow, or the capture keeps arriving letterboxed at the old aspect.
@@ -43,6 +43,13 @@ class CaptureBridge(
         private const val VIRTUAL_DISPLAY_NAME = "RetroAI_Capture_Display"
     }
 
+    /**
+     * Ten seconds. A screen mirror that stops delivering frames is a fault, not
+     * a pause: MediaProjection keeps producing while anything at all is on
+     * screen, so silence this long means the pipeline is broken.
+     */
+    override val frameStallTimeoutMs: Long = 10_000L
+
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var captureThread: HandlerThread? = null
@@ -52,22 +59,22 @@ class CaptureBridge(
     private var isCapturing = false
 
     @Volatile
-    var isPaused = false
+    override var isPaused = false
         private set
 
     /** Elapsed-realtime of the last frame that actually reached native. */
     @Volatile
-    var lastFrameAtMs: Long = 0L
+    override var lastFrameAtMs: Long = 0L
         private set
 
     /** Elapsed-realtime of startCapture(), used to detect a pipeline that never starts. */
     @Volatile
-    var startedAtMs: Long = 0L
+    override var startedAtMs: Long = 0L
         private set
 
     /** Frames successfully rendered since start. */
     @Volatile
-    var renderedFrames: Long = 0L
+    override var renderedFrames: Long = 0L
         private set
 
     private val projectionCallback = object : MediaProjection.Callback() {
@@ -251,7 +258,7 @@ class CaptureBridge(
      * frame into the existing ImageReader surface, and the frame watchdog then
      * (correctly) concludes the pipeline is dead and shuts the service down.
      */
-    fun pauseCapture() {
+    override fun pauseCapture() {
         if (!isCapturing || isPaused) return
         isPaused = true
         try {
@@ -263,7 +270,7 @@ class CaptureBridge(
         }
     }
 
-    fun resumeCapture(): Boolean {
+    override fun resumeCapture(): Boolean {
         if (!isCapturing || !isPaused) return true
         return try {
             virtualDisplay?.surface = imageReader?.surface
@@ -291,7 +298,7 @@ class CaptureBridge(
      *
      * Blocking, because every caller's next step is to touch the renderer.
      */
-    fun detachEglContext() {
+    override fun detachEglContext() {
         runOnCaptureThread { nativeBridge.nativeDetachEglContext() }
     }
 
@@ -307,7 +314,7 @@ class CaptureBridge(
      * Returns false when there is no capture thread to run on, so callers can
      * fall back to doing it inline.
      */
-    fun runOnCaptureThread(block: () -> Unit): Boolean {
+    override fun runOnCaptureThread(block: () -> Unit): Boolean {
         val handler = captureHandler ?: return false
         val latch = CountDownLatch(1)
         val posted = handler.post {
@@ -321,7 +328,7 @@ class CaptureBridge(
         return latch.await(500, TimeUnit.MILLISECONDS)
     }
 
-    fun stopCapture() {
+    override fun stopCapture() {
         isCapturing = false
 
         virtualDisplay?.release()

@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     // ordinary frame source.
     private lateinit var btnShimProbe: Button
     private lateinit var btnShimDump: Button
+    private lateinit var btnShimStart: Button
     private lateinit var tvShimProbe: TextView
 
     private val foregroundMonitor by lazy { ForegroundAppMonitor(this) }
@@ -183,11 +184,27 @@ class MainActivity : AppCompatActivity() {
 
         btnShimProbe = findViewById(R.id.btnShimProbe)
         btnShimDump = findViewById(R.id.btnShimDump)
+        btnShimStart = findViewById(R.id.btnShimStart)
         tvShimProbe = findViewById(R.id.tvShimProbe)
         btnShimProbe.setOnClickListener {
             val intent = Intent(this, ShimFrameService::class.java)
             if (ShimFrameService.isRunning) stopService(intent)
             else ContextCompat.startForegroundService(this, intent)
+        }
+        btnShimStart.setOnClickListener {
+            if (OverlayService.isRunning) {
+                stopOverlayService()
+            } else if (!Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, R.string.toast_grant_overlay_first, Toast.LENGTH_LONG).show()
+            } else {
+                // No projection consent dialog: shim mode never captures the
+                // screen, so there is nothing to ask for.
+                ContextCompat.startForegroundService(
+                    this,
+                    Intent(this, OverlayService::class.java)
+                        .putExtra(OverlayService.EXTRA_SHIM_MODE, true)
+                )
+            }
         }
         btnShimDump.setOnClickListener {
             // Arms the receiver; the next frame to arrive is written out. Doing
@@ -215,6 +232,11 @@ class MainActivity : AppCompatActivity() {
             else R.string.shim_link_start
         )
         btnShimDump.isEnabled = ShimFrameService.connected
+        btnShimStart.setText(
+            if (OverlayService.isRunning) R.string.shim_link_stop_render
+            else R.string.shim_link_render
+        )
+        btnShimStart.isEnabled = ShimFrameService.isRunning
 
         val lines = ShimFrameService.transcript
         if (lines.isEmpty()) {

@@ -223,6 +223,8 @@
     <string name="shim_link_start">Start frame link</string>
     <string name="shim_link_stop">Stop frame link</string>
     <string name="shim_link_dump">Dump next frame</string>
+    <string name="shim_link_render">Render full screen</string>
+    <string name="shim_link_stop_render">Stop rendering</string>
     <string name="shim_link_idle">Not running.</string>
     <string name="shim_link_notification">Waiting for frames on loopback</string>
 </resources>

@@ -49,6 +49,18 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class ShimFrameService : Service() {
 
+    /**
+     * Where frames go once received. Null until a frame source registers,
+     * which is what makes this service useful both as gate 3's measuring
+     * instrument on its own and as the socket end of the real pipeline.
+     *
+     * Called on the socket thread with the receiver's own buffer, which is
+     * valid only for the duration of the call.
+     */
+    fun interface FrameListener {
+        fun onFrame(data: ByteArray, width: Int, height: Int, pitch: Int, format: Int)
+    }
+
     companion object {
         private const val TAG = "RetroAI_ShimLink"
         private const val NOTIFICATION_ID = 1002
@@ -85,6 +97,8 @@ class ShimFrameService : Service() {
         @Volatile var lastDumpPath: String? = null
 
         val transcript = CopyOnWriteArrayList<String>()
+
+        @Volatile var frameListener: FrameListener? = null
 
         fun linkDir(): File =
             File(Environment.getExternalStorageDirectory(), "RetroAIScaler/shim")
@@ -322,6 +336,8 @@ class ShimFrameService : Service() {
                 windowStart = now
                 windowFrames = 0
             }
+
+            frameListener?.onFrame(payload, lastWidth, lastHeight, lastPitch, lastFormat)
 
             if (dumpRequested.compareAndSet(true, false)) {
                 dumpFrame(payload, lastWidth, lastHeight, lastPitch, lastFormat)
