@@ -274,6 +274,27 @@ class FloatingBallManager(
         if (nativeWidth <= 0 || nativeHeight <= 0) 1
         else minOf(screenWidth / nativeWidth, screenHeight / nativeHeight).coerceAtLeast(1)
 
+    /**
+     * Re-reads the saved settings, for when something outside changed which
+     * console is current.
+     *
+     * The profile here is an object loaded once; writing the preference does
+     * not reach it. So preselecting the console for the capture fallback set
+     * the preference to PlayStation while this went on holding a Famicom, and
+     * the viewport was computed 256x240 for a console that is 320x240.
+     */
+    fun reloadProfile() {
+        profile = ProfilePreference.load(context)
+        nativeSizeOverride = null
+        lastCoreFile = null
+        menuView?.let {
+            syncMenuToProfile(it)
+            syncEngineChipToProfile()
+        }
+        pushAllSettings()
+        Log.i(TAG, "profile reloaded for ${profile.console.name}")
+    }
+
     fun pushAllSettings() {
         // The engine owns its effects, including across a restart: a profile
         // saved while the lighting was still a separate switch would otherwise

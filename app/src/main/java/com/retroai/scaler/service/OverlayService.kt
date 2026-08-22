@@ -800,9 +800,23 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 if (shimSource != null) {
                     Log.i(TAG, "switching from the direct source to screen capture")
                     frameSource?.pauseCapture()
+                    /*
+                     * Wipe the last frame WHILE the source thread still exists.
+                     *
+                     * That thread owns the EGL context, and clearing has to
+                     * happen on it (AGENT.md §10.3b). Tearing the source down
+                     * first leaves nowhere to run, the clear silently does
+                     * nothing, and the previous console's last frame stays
+                     * frozen on the glass over whatever is really on screen -
+                     * which here is this app's own settings page.
+                     */
+                    frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() }
                     frameSource?.detachEglContext()
                     stopFrameSource()
                 }
+                // The console was preselected from the core name a moment ago,
+                // in the activity. This is the copy that has to be told.
+                floatingBallManager?.reloadProfile()
                 shimMode = false
                 /*
                  * None of the capture state survives the switch.
