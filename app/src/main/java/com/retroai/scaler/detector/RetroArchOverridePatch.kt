@@ -72,8 +72,8 @@ object RetroArchOverridePatch {
      * Only the last-resort strip uses this, and only for files patched before
      * the record existed - which is exactly the case where the current key set
      * is the wrong question. `custom_viewport_x/y` are deliberately absent:
-     * they have never been written by any build (AGENT.md §2), so stripping
-     * them would delete something that can only be the user's own.
+     * they have never been written by any build (AGENT.md §2), so deleting one
+     * outright would be deleting something that can only be the user's own.
      */
     val KEYS = listOf(
         "aspect_ratio_index",
@@ -87,6 +87,25 @@ object RetroArchOverridePatch {
         "video_filter",
         "video_smooth"
     )
+
+    /**
+     * The rest of the custom-viewport group: ours to delete only when the size
+     * goes with them.
+     *
+     * A custom viewport is width, height and an offset, and it means nothing
+     * without the size. A repack override that read
+     *
+     *     custom_viewport_width  = "1200"   <- ours to take over
+     *     custom_viewport_height = "800"    <- ours to take over
+     *     custom_viewport_y      = "-45"    <- theirs, never touched
+     *
+     * came out of a strip as an offset with no size, which RetroArch then
+     * combined with whatever the MAIN config had for a size - and drew the
+     * picture at some unrelated magnification, shifted up 45 pixels. Seen on
+     * the test device: a Game Boy Advance title screen blown up past the edges
+     * of the panel. Half a viewport is worse than none.
+     */
+    private val VIEWPORT_ORPHANS = listOf("custom_viewport_x", "custom_viewport_y")
 
     /** True if this tool wrote into these lines - any build, any era. */
     fun isOurs(lines: List<String>): Boolean = lines.any { it.trim() in MARKERS }
@@ -196,9 +215,18 @@ object RetroArchOverridePatch {
      * whatever the repack itself had set for those ten keys - a bezel toggle, a
      * shader switch - against the alternative of RetroArch drawing into a
      * corner forever. It is tried last for exactly that reason.
+     *
+     * What it must never do is leave HALF a setting behind: taking the viewport
+     * size out and leaving the offset in is not a smaller change than taking
+     * both, it is a worse one. See [VIEWPORT_ORPHANS].
      */
-    fun strip(lines: List<String>): List<String> =
-        lines.filterNot { isOurLine(it) || keyOf(it) in KEYS }
+    fun strip(lines: List<String>): List<String> {
+        val losesViewportSize = lines.any {
+            keyOf(it) == "custom_viewport_width" || keyOf(it) == "custom_viewport_height"
+        }
+        val drop = if (losesViewportSize) KEYS + VIEWPORT_ORPHANS else KEYS
+        return lines.filterNot { isOurLine(it) || keyOf(it) in drop }
+    }
 
     /** `foo = "bar"` -> `foo`. Blank and comment lines yield no real key. */
     private fun keyOf(line: String): String = line.substringBefore('=').trim()

@@ -49,6 +49,29 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
 
         private val STAMP_FORMAT = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
 
+        /**
+         * A snapshot directory is named by its stamp, and a directory that is
+         * not named by a stamp is not a snapshot.
+         *
+         * This was a one-word assumption - "every directory under backups/ is a
+         * snapshot" - and it was false from the moment the launch-file rewriter
+         * shipped, because that keeps its pristine copies in
+         * `backups/pegasus`. "pegasus" sorts ABOVE every yyyyMMdd stamp, so it
+         * became "the newest snapshot": `File(pegasus, "config")` is not a
+         * directory, so **every restore since then found no usable backup**.
+         * The old code said "backup incomplete" and restored nothing; the
+         * marker stayed, and the next start restored nothing again.
+         *
+         * It was also one snapshot away from `pruneOldSnapshots` deleting those
+         * launch-file copies as an old snapshot.
+         *
+         * Checked by shape rather than by excluding the one name we know about:
+         * anything else that ever lands in this directory is excluded too.
+         */
+        private val STAMP = Regex("""^\d{8}-\d{6}$""")
+
+        fun isSnapshotName(name: String): Boolean = STAMP.matches(name)
+
         fun backupRoot(): File = File(BACKUP_ROOT)
     }
 
@@ -64,7 +87,7 @@ class RetroArchBackupManager(private val context: Context, private val configRoo
     )
 
     fun listSnapshots(): List<File> =
-        (backupRoot().listFiles { f -> f.isDirectory } ?: emptyArray())
+        (backupRoot().listFiles { f -> f.isDirectory && isSnapshotName(f.name) } ?: emptyArray())
             .sortedByDescending { it.name }
 
     fun latestSnapshot(): File? = listSnapshots().firstOrNull()

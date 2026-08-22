@@ -163,6 +163,54 @@ class RetroArchOverridePatchTest {
     }
 
     @Test
+    fun `stripping never leaves half a viewport behind`() {
+        /*
+         * The real VBA-M override off the test device. The repack set a size
+         * AND an offset; we only ever take the size over, so a strip that
+         * deletes what it wrote leaves "custom_viewport_y = -45" pointing at a
+         * size that now comes from the main config - and the picture came up
+         * magnified past the edges of the panel and shifted up.
+         */
+        val repack = listOf(
+            "custom_viewport_height = \"800\"",
+            "custom_viewport_width = \"1200\"",
+            "custom_viewport_y = \"-45\"",
+            "input_overlay = \"/storage/emulated/0/RetroArch/overlays/GBA_VV.cfg\"",
+            "video_scale_integer = \"true\""
+        )
+        val old = listOf(RetroArchOverridePatch.MARKER) + repack
+
+        val stripped = RetroArchOverridePatch.strip(old)
+        assertNull(valueOf(stripped, "custom_viewport_width"))
+        assertNull(valueOf(stripped, "custom_viewport_height"))
+        assertNull(valueOf(stripped, "custom_viewport_y"))
+        // Nothing else of theirs goes with it.
+        assertEquals(
+            "/storage/emulated/0/RetroArch/overlays/GBA_VV.cfg",
+            valueOf(stripped, "input_overlay")
+        )
+    }
+
+    @Test
+    fun `an offset with no size of ours is left alone`() {
+        // We never wrote a size here, so the offset is not orphaned by us and
+        // deleting it would be deleting the player's own setting.
+        val theirs = listOf(RetroArchOverridePatch.MARKER, "custom_viewport_y = \"-45\"")
+        assertEquals("-45", valueOf(RetroArchOverridePatch.strip(theirs), "custom_viewport_y"))
+    }
+
+    @Test
+    fun `only a stamped directory is a snapshot`() {
+        // The launch-file rewriter keeps its copies in backups/pegasus, and
+        // "pegasus" sorts above every stamp - which made it "the newest
+        // snapshot" and broke every restore for weeks.
+        assertTrue(RetroArchBackupManager.isSnapshotName("20260816-220931"))
+        assertFalse(RetroArchBackupManager.isSnapshotName("pegasus"))
+        assertFalse(RetroArchBackupManager.isSnapshotName("20260816"))
+        assertFalse(RetroArchBackupManager.isSnapshotName("20260816-220931-old"))
+    }
+
+    @Test
     fun `stripping is idempotent`() {
         val patched = RetroArchOverridePatch.patch(original, viewport)
         val once = RetroArchOverridePatch.strip(patched)
