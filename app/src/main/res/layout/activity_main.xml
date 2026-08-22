@@ -135,7 +135,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
                         android:layout_marginStart="8dp"
-                        android:text="@string/shim_restore"
+                        android:text="@string/shim_apply"
                         android:textColor="@color/primary"
                         android:textSize="12sp" />
 
@@ -145,9 +145,22 @@
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
                         android:layout_marginStart="8dp"
+                        android:text="@string/shim_restore"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+
+                    <!-- Only shown when a GPU-rendering core makes it the
+                         answer; see updateShimProbeUi. -->
+                    <Button
+                        android:id="@+id/btnShimCapture"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
                         android:text="@string/shim_use_capture"
                         android:textColor="@color/primary"
-                        android:textSize="12sp" />
+                        android:textSize="12sp"
+                        android:visibility="gone" />
                 </LinearLayout>
 
                 <TextView

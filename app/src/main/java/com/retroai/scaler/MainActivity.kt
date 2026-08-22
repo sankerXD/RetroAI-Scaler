@@ -54,6 +54,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnShimDump: Button
     private lateinit var btnShimStart: Button
 
+    private lateinit var btnShimCapture: Button
+
     /** Filled in by syncLaunchFiles, read by the status line. */
     @Volatile private var shimCoreCount = 0
     @Volatile private var shimConvertedCount = 0
@@ -200,8 +202,10 @@ class MainActivity : AppCompatActivity() {
         btnShimStart = findViewById(R.id.btnShimStart)
         tvShimProbe = findViewById(R.id.tvShimProbe)
         btnShimProbe.setOnClickListener { showSetupGuide() }
-        btnShimStart.setOnClickListener { confirmRestoreLaunchFiles() }
-        btnShimDump.setOnClickListener { requestStartCapturePipeline() }
+        btnShimStart.setOnClickListener { applyLaunchFiles() }
+        btnShimDump.setOnClickListener { confirmRestoreLaunchFiles() }
+        btnShimCapture = findViewById(R.id.btnShimCapture)
+        btnShimCapture.setOnClickListener { requestStartCapturePipeline() }
     }
 
     /** The service can stop itself while this Activity stays resumed (floating
@@ -276,12 +280,12 @@ class MainActivity : AppCompatActivity() {
     private fun updateShimProbeUi() {
         // Only offered when it is the answer to something: a core that draws
         // on the GPU is the one case direct mode cannot serve.
-        btnShimDump.visibility =
+        btnShimCapture.visibility =
             if (ShimFrameService.hardwareRenderedCore) View.VISIBLE else View.GONE
 
         val converted = shimConvertedCount
         val total = shimCoreCount
-        btnShimStart.isEnabled = converted > 0
+        btnShimDump.isEnabled = converted > 0
         tvShimProbe.text = when {
             total == 0 -> getString(R.string.shim_link_idle)
             converted == 0 -> getString(R.string.shim_status_none)
@@ -553,14 +557,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Brings the frontend's launch lines up to date with the shims that exist.
+     * Reads what the device has, and publishes what the shim should cover.
      *
-     * Runs on every start rather than as a "finish setup" step the player has
-     * to find. The shim can only replicate itself while RetroArch is running,
-     * so coverage grows one launch at a time: convert what is installed now,
-     * publish the full list of cores this device uses, and the next time a game
-     * runs the shim fills in the rest. Nobody is told to come back and press
-     * anything - more consoles simply start being enhanced.
+     * Deliberately does NOT touch the launch files. Rewriting them silently on
+     * every start meant the app could change how a player's whole library
+     * launches without ever saying so, and then report every console as set up
+     * while the frontend was still holding a stale scan and nothing was
+     * actually enhanced. Editing those files is now something the player asks
+     * for, once, by pressing a button - and gets told what to do next.
      */
     private fun syncLaunchFiles() {
         Thread {
@@ -571,29 +575,48 @@ class MainActivity : AppCompatActivity() {
                     Log.i(TAG, "no frontend launch files found - nothing to sync")
                     return@Thread
                 }
+                // Publishing the core list is safe to do silently: it only
+                // tells the shim what to replicate itself for, and changes
+                // nothing the frontend reads.
                 manager.writeCoresList(scan.cores)
-                val result = manager.applyShim()
-                val after = manager.scan()
-                shimCoreCount = after.cores.size
-                shimConvertedCount = after.converted.size
-                Log.i(TAG, "launch sync: ${scan.cores.size} cores known, ${result.message}")
+                shimCoreCount = scan.cores.size
+                shimConvertedCount = scan.converted.size
+                Log.i(TAG, "scan: ${scan.cores.size} cores, ${scan.converted.size} converted")
                 runOnUiThread {
                     updateShimProbeUi()
                     if (isFinishing) return@runOnUiThread
-                    when {
-                        // Nothing set up means nothing works yet, and a button
-                        // someone has to notice is a worse way to say so than
-                        // simply saying it.
-                        shimConvertedCount == 0 -> showSetupGuide()
-                        // Something changed just now, so the frontend is
-                        // holding a stale scan and nothing we did is live yet.
-                        result.changed > 0 -> showReloadNotice(result.changed)
-                    }
+                    // Nothing set up means nothing works yet, and a button
+                    // someone has to notice is a worse way to say so than
+                    // simply saying it.
+                    if (shimConvertedCount == 0) showSetupGuide()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "syncing the launch files failed", e)
             }
         }.apply { name = "LaunchSync"; isDaemon = true }.start()
+    }
+
+    /** Points the launch entries at the shim, on the player's say-so. */
+    private fun applyLaunchFiles() {
+        Thread {
+            val manager = PegasusConfigManager()
+            val scan = manager.scan()
+            manager.writeCoresList(scan.cores)
+            val result = runCatching { manager.applyShim() }
+                .getOrElse { PegasusConfigManager.Result(0, 0, it.message ?: "failed") }
+            val after = manager.scan()
+            shimCoreCount = after.cores.size
+            shimConvertedCount = after.converted.size
+            Log.i(TAG, "apply: ${result.message}")
+            runOnUiThread {
+                updateShimProbeUi()
+                if (isFinishing) return@runOnUiThread
+                if (result.changed > 0) showReloadNotice(result.changed)
+                else Toast.makeText(
+                    this, getString(R.string.toast_nothing_to_apply), Toast.LENGTH_LONG
+                ).show()
+            }
+        }.apply { name = "LaunchApply"; isDaemon = true }.start()
     }
 
     /** Puts every launch line back to its real core. */
