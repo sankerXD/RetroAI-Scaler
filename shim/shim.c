@@ -30,6 +30,7 @@
 #include "libretro_abi.h"
 
 #include <android/log.h>
+#include <dirent.h>
 #include <dlfcn.h>
 #include <limits.h>
 #include <pthread.h>
@@ -266,6 +267,52 @@ static bool info_stem(const char *so_name, char *out, size_t out_sz)
     return true;
 }
 
+static void describe_savestate_keys(const char *info_path)
+{
+    FILE *f = fopen(info_path, "r");
+    if (!f) return;
+
+    char line[512];
+    int  found = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (!strstr(line, "savestate")) continue;
+        line[strcspn(line, "\r\n")] = '\0';
+        LOGI("  %s declares: %s", info_path, line);
+        found++;
+    }
+    if (found == 0)
+        LOGI("  %s declares NO savestate key - RetroArch is deciding from its "
+             "own default, so copying this file cannot be what is missing",
+             info_path);
+    fclose(f);
+}
+
+static void describe_info_dir(const char *info_dir)
+{
+    DIR *d = opendir(info_dir);
+    if (!d) {
+        LOGE("cannot open info dir %s", info_dir);
+        return;
+    }
+
+    struct dirent *e;
+    int infos = 0, others = 0;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.' &&
+            (e->d_name[1] == '\0' || (e->d_name[1] == '.' && e->d_name[2] == '\0')))
+            continue;
+        size_t n = strlen(e->d_name);
+        if (n > 5 && strcmp(e->d_name + n - 5, ".info") == 0) {
+            infos++;
+        } else {
+            if (others < 8) LOGI("  info dir also holds: %s", e->d_name);
+            others++;
+        }
+    }
+    closedir(d);
+    LOGI("  info dir %s: %d .info files, %d other entries", info_dir, infos, others);
+}
+
 static void install_info_file(const char *self_dir, const char *self_base,
                               const char *core_base)
 {
@@ -306,10 +353,22 @@ static void install_info_file(const char *self_dir, const char *self_base,
     snprintf(src, sizeof(src), "%s/%s.info", info_dir, core_stem);
     snprintf(dst, sizeof(dst), "%s/%s.info", info_dir, self_stem);
 
+    /* Whether RetroArch declares save-state support is decided by keys in this
+     * file, so log them from the source. If the real core's info carries no
+     * savestate key at all, copying it cannot grant what it never stated, and
+     * the fix is to append the keys rather than to copy harder. */
+    describe_savestate_keys(src);
+    /* And list anything in the directory that is not a .info: RetroArch can
+     * keep a core-info cache there, and a stale cache would explain a file
+     * that is present being ignored. */
+    describe_info_dir(info_dir);
+
     FILE *out = fopen(dst, "r");
     if (out) {
+        fseek(out, 0, SEEK_END);
+        long sz = ftell(out);
         fclose(out);
-        LOGI("%s already exists, leaving it alone", dst);
+        LOGI("%s already exists (%ld bytes), leaving it alone", dst, sz);
         return;
     }
 
