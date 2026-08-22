@@ -32,26 +32,34 @@ class RetroArchConfigManager(private val context: Context) {
         private const val TAG = "RAConfigManager"
 
         /**
-         * Stamped into every file we touch. RetroArch ignores '#' lines, and it
-         * lets restore tell "this file is ours but its backup is gone" apart
-         * from "this file was never touched" - otherwise a file that cannot be
-         * restored is silently skipped and the user is told everything is fine.
+         * The marker, the record format and the three ways back off a patched
+         * file all live in [RetroArchOverridePatch], which is pure text and
+         * therefore testable on a desktop. These two are kept as aliases
+         * because the whole app already speaks them.
          */
-        const val MARKER = "# --- modified by RetroAI-Scaler ---"
-
-        /**
-         * What the marker used to say, before the project name lost its
-         * hyphens. Detection has to accept it or a config written by an older
-         * build is unrecognisable, and "only restore files we marked" quietly
-         * becomes "never restore that file" - leaving someone's RetroArch
-         * permanently configured for our viewport with no way back.
-         *
-         * Only ever recognised, never written.
-         */
-        const val LEGACY_MARKER = "# --- modified by Retro-AI-Scaler ---"
+        const val MARKER = RetroArchOverridePatch.MARKER
 
         /** Every marker this tool has ever written. */
-        val MARKERS = listOf(MARKER, LEGACY_MARKER)
+        val MARKERS = RetroArchOverridePatch.MARKERS
+
+        /**
+         * One writer at a time across the whole app.
+         *
+         * Three components reach these files - the service on start and stop,
+         * the activity's heal on open, the Undo button - and they are not
+         * ordered by anything. Two restores running at once is not
+         * hypothetical: the service's stop-restore runs on its own thread while
+         * onDestroy carries on, and opening the app at that moment starts
+         * another. They would then write the SAME `.cfg.rascaler-tmp` sibling
+         * from two threads and rename it twice, which is how a config file ends
+         * up half of each - the one outcome the temp-file dance exists to
+         * prevent.
+         *
+         * A JVM lock is enough because every one of those callers is in this
+         * process. RetroArch is not a writer here; it reads overrides at
+         * content load.
+         */
+        internal val CONFIG_LOCK = Any()
 
         private val CONFIG_ROOT_CANDIDATES = listOf(
             "/storage/emulated/0/RetroArch/config",
@@ -76,7 +84,8 @@ class RetroArchConfigManager(private val context: Context) {
             ConsoleType.MD to listOf("Genesis Plus GX", "PicoDrive"),
             ConsoleType.PS1 to listOf(
                 "Beetle PSX", "Beetle PSX HW", "PCSX-ReARMed", "SwanStation", "DuckStation"
-            )
+            ),
+            ConsoleType.DC to listOf("Flycast", "Flycast GL", "Redream")
         )
 
         fun hasAllFilesAccess(): Boolean = Environment.isExternalStorageManager()
@@ -96,6 +105,10 @@ class RetroArchConfigManager(private val context: Context) {
      * file whose backup had disappeared could not be rolled back at all.
      * RetroArchBackupManager keeps dated full snapshots instead, and never
      * deletes them.
+     *
+     * Not the primary way back any more: a patched file carries its own record
+     * of what was displaced, and the restore prefers that. The snapshots answer
+     * a different question - a file that is corrupt rather than merely patched.
      */
     fun backupManager(): RetroArchBackupManager? =
         findConfigRoot()?.let { RetroArchBackupManager(context, it) }
@@ -203,6 +216,7 @@ class RetroArchConfigManager(private val context: Context) {
 
         var patched = 0
         val failures = mutableListOf<String>()
+        synchronized(CONFIG_LOCK) {
         for (folder in folders) {
             val cfgFiles = folder.listFiles { f ->
                 f.isFile && f.name.endsWith(".cfg", ignoreCase = true)
@@ -210,6 +224,7 @@ class RetroArchConfigManager(private val context: Context) {
             for (cfg in cfgFiles) {
                 if (patchFile(cfg, values)) patched++ else failures.add(cfg.name)
             }
+        }
         }
 
         return when {
@@ -221,31 +236,14 @@ class RetroArchConfigManager(private val context: Context) {
     }
 
     /**
-     * Rewrites the listed keys in place, keeping every other line untouched, and
-     * keeps a one-time backup so the user's original repack config is never lost.
+     * Rewrites the listed keys in place, keeping every other line untouched,
+     * and - on the first touch - writing down what it displaced, so the restore
+     * does not depend on a snapshot still existing and still being clean. See
+     * [RetroArchOverridePatch].
      */
     private fun patchFile(cfg: File, values: Map<String, String>): Boolean {
         return try {
-            val original = cfg.readLines()
-            val remaining = values.toMutableMap()
-            val out = ArrayList<String>(original.size + values.size + 1)
-            if (original.none { it.trim() in MARKERS }) {
-                out.add(MARKER)
-            }
-
-            for (line in original) {
-                val key = line.substringBefore('=').trim()
-                val replacement = remaining.remove(key)
-                if (replacement != null) {
-                    out.add("$key = \"$replacement\"")
-                } else {
-                    out.add(line)
-                }
-            }
-            for ((key, value) in remaining) {
-                out.add("$key = \"$value\"")
-            }
-
+            val out = RetroArchOverridePatch.patch(cfg.readLines(), values)
             cfg.writeText(out.joinToString("\n") + "\n")
             Log.i(TAG, "patched ${cfg.absolutePath}")
             true

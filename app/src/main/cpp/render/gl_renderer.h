@@ -127,6 +127,23 @@ public:
                      bool protectSource);
 
     /**
+     * Paint the area outside the output rect opaque black instead of leaving
+     * it transparent.
+     *
+     * Under screen capture, transparent was right: RetroArch had been shrunk
+     * into a corner and everything else on screen was already black, so an
+     * opaque overlay would only have been something extra to see through.
+     *
+     * With the libretro shim there is no reason to shrink RetroArch any more,
+     * so it draws full screen underneath us while our own output covers only
+     * the largest whole multiple of the native resolution. Every pixel we leave
+     * transparent is a pixel of RetroArch's unenhanced picture showing through
+     * around the edges - which is the double image this whole route exists to
+     * remove, returned as a border.
+     */
+    void setLetterboxOpaque(bool opaque) { letterboxOpaque_ = opaque; }
+
+    /**
      * Grabs the capture window at exactly native resolution for the training
      * corpus. The source region is clean in both capture modes - whole-screen
      * discards our output over it, single-app never mirrors us - so no
@@ -263,6 +280,7 @@ private:
     bool showSourceGuide_{false};
     /** False under single-app capture: our output is allowed over the source. */
     bool protectSource_{true};
+    bool letterboxOpaque_{false};
     /** HD-2D lights the picture with the depth net instead of replacing it. */
     bool hd2dEnabled_{false};
     float hd2dStrength_{0.5f};

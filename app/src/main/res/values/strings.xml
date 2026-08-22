@@ -1,4 +1,4 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!--
         ENGLISH IS THE DEFAULT, Chinese lives in values-zh/.
 
@@ -12,15 +12,14 @@
         translation is free to reorder it.
     -->
     <string name="app_name" translatable="false">RetroAI Scaler</string>
-    <string name="app_subtitle">Real-time AI upscaling layer for RetroArch</string>
+    <string name="app_subtitle">Real-time AI engine for RetroArch emulation</string>
 
     <!-- Main screen: status and the big button -->
     <string name="status_service_running">AI enhancement running</string>
     <string name="status_service_stopped">AI enhancement stopped</string>
-    <string name="btn_start_service">Start AI enhancement</string>
+    <string name="btn_start_service">Start the AI engine</string>
     <string name="btn_stop_service">Stop the service</string>
     <string name="hw_detecting">Detecting hardware…</string>
-    <string name="usage_hint">How to use: start AI enhancement, wait for capture to begin, then launch a game from your frontend</string>
 
     <!-- Main screen: console section -->
     <string name="section_console">Console</string>
@@ -55,8 +54,14 @@
     <!-- Main screen: language -->
     <string name="section_language">Language</string>
     <string name="language_system">Follow system</string>
-    <string name="language_zh">简体中文</string>
-    <string name="language_en">English</string>
+    <!--
+        Not translated on purpose: these two name the languages themselves, and
+        a language is written the same way whichever language you are reading
+        in. "English" in the Chinese UI must still say English, or the person
+        looking for it cannot find it.
+    -->
+    <string name="language_zh" tools:ignore="MissingTranslation">简体中文</string>
+    <string name="language_en" tools:ignore="MissingTranslation">English</string>
     <string name="dialog_pick_language_title">Language</string>
     <string name="toast_language_restart_service">Restart AI enhancement to change the floating menu too</string>
 
@@ -72,6 +77,7 @@
     <string name="toast_restart_to_apply">Restart AI enhancement to apply</string>
     <string name="toast_grant_overlay_first">Grant the overlay permission first</string>
     <string name="btn_cancel">Cancel</string>
+    <string name="btn_confirm">Confirm</string>
 
     <!-- Floating menu -->
     <string name="menu_title">Retro AI control</string>
@@ -114,6 +120,7 @@
     <string name="toast_config_written">%1$s\nRestart RetroArch, then run “Locate the game picture” again</string>
     <string name="toast_detecting">Locating the game picture…</string>
     <string name="toast_detect_locked">Locked on: %1$d×%2$d @ (%3$d, %4$d)</string>
+    <string name="toast_detect_fullscreen">RetroArch is still drawing full screen, so its new layout has not been applied. Close RetroArch and start the game again.</string>
     <string name="toast_detect_failed">No game picture found. Check that the game is showing and is not a black screen</string>
     <string name="toast_corner_restored">Back to the corner-based capture window</string>
 
@@ -131,6 +138,7 @@
     <string name="toast_backup_done">RetroArch config backed up\n%1$s</string>
     <string name="toast_no_core_dir">No core config directory for %1$s - run a game on that platform in RetroArch once first</string>
     <string name="toast_configured_restart">%1$s configured, please restart RetroArch</string>
+    <string name="toast_unknown_core">Cannot tell which console “%1$s” is, so RetroArch\'s config was left alone. Start the game from the frontend once, then try screen recording again.</string>
     <string name="banner_capture_mode_changed">Capture mode changed\nClose RetroArch and load the game again</string>
     <string name="toast_capture_mode_mismatch">Capture mode differed from the prediction and was reconfigured\nRestart RetroArch and load the game again</string>
     <string name="toast_capture_start_failed">Screen capture failed to start, AI enhancement stopped</string>
@@ -145,6 +153,7 @@
     <string name="console_fc" translatable="false">FC/NES</string>
     <string name="console_md" translatable="false">MD/Genesis</string>
     <string name="console_ps1">PS1/Arcade</string>
+    <string name="console_dc">Dreamcast</string>
 
     <!-- Capture window corners -->
     <string name="corner_top_left">Top left</string>
@@ -188,16 +197,17 @@
     <string name="backup_done">Backed up %1$d config file(s) (%2$d KB)\n%3$s</string>
     <string name="backup_kept">\nKeeping %1$d/%2$d snapshots</string>
     <string name="backup_pruned">, pruned %1$d oldest</string>
-    <string name="backup_none_available">No backup available</string>
-    <string name="backup_incomplete">Backup %1$s is incomplete</string>
-    <string name="backup_restored">Restored %1$d file(s) from backup %2$s</string>
+    <string name="backup_restored_files">Restored %1$d RetroArch config file(s)</string>
+    <string name="backup_restored_via_snapshot">\n%1$d of them from snapshot %2$s</string>
+    <string name="backup_restored_via_strip">\n%1$d had no record and no usable snapshot; our keys were removed instead</string>
     <string name="backup_restored_kept">\n(the backup is kept; %1$d in total)</string>
-    <string name="backup_restore_missing">\n⚠ %1$d file(s) were not in that backup:\n</string>
+    <string name="backup_restore_failed">\n⚠ %1$d file(s) could not be restored:\n</string>
     <string name="backup_note_header">RetroAI-Scaler config backup</string>
     <string name="backup_note_time">Time: %1$s</string>
     <string name="backup_note_reason">Reason: %1$s</string>
     <string name="backup_note_source">Source: %1$s</string>
     <string name="backup_note_files">Files: %1$d (%2$d KB), skipped %3$d large files/BIOS</string>
+    <string name="backup_note_manual_restore">To restore by hand, with or without this app: copy the config/ folder next to this file over\n%1$s\nRetroArch reads it again the next time it loads content.</string>
     <string name="backup_note_main_config">Note: RetroArch\'s main retroarch.cfg lives under\nAndroid/data/com.retroarch.aarch64/files/, which no third-party\napp can reach since Android 11, so it is not in this backup.\nThis tool never modifies it either - only core overrides.</string>
 
     <!-- Corpus capture (developer tooling, no menu entry) -->
@@ -212,4 +222,44 @@
     <string name="capture_button_count">Grab a native frame  %1$d saved</string>
     <string name="capture_auto_stop">Stop auto capture  %1$d saved\n%2$s</string>
     <string name="capture_auto_start">Start auto capture</string>
+
+    <!--
+      TEMPORARY - gate 1 of the libretro shim route (NewSolution.md §7).
+      Delete along with ShimProbeService.kt once the gate is answered. The
+      transcript itself is deliberately untranslated: it is a diagnostic log.
+    -->
+    <string name="toast_shim_hw_core">This console cannot be enhanced directly. Close RetroArch, then start screen recording mode from the app.</string>
+    <string name="toast_shim_hw_core_unsupported">This platform cannot be rendered directly. AI enhancement has stopped.</string>
+    <string name="toast_shim_no_frames">No picture arrived from the emulator. Check that the companion core is installed in RetroArch and that the game was started with it.</string>
+    <string name="shim_setup_title">First-time setup</string>
+    <string name="shim_setup_guide">1 · Install the core</string>
+    <string name="shim_apply">2 · Update the launcher</string>
+    <string name="shim_restore">Undo</string>
+    <string name="toast_nothing_to_apply">Nothing to update — the launcher already points at every core that is installed.</string>
+    <string name="capture_wont_fit_title">Not enough room on this screen</string>
+    <string name="capture_wont_fit_body">%1$s draws at %2$d×%3$d natively.\n\nScreen recording mirrors this app\'s own output, so RetroArch has to be parked in a corner at native size and the enhanced picture has to fit in what is left. On a %4$d×%5$d screen there is no room for a picture bigger than the original.\n\nThis route cannot help this platform here - it is the screen, not the setup.</string>
+    <string name="special_mode_title">Special mode</string>
+    <string name="special_mode_desc">This platform is drawn on the GPU, so its picture cannot be read from inside the emulator. Screen recording works for it.</string>
+    <string name="special_mode_desc_console">%1$s is drawn on the GPU, so its picture cannot be read from inside the emulator. Screen recording works for it.</string>
+    <string name="shim_use_capture">Screen recording</string>
+    <string name="shim_status">%1$d of %2$d consoles are set up</string>
+    <string name="shim_status_none">Not set up yet — press “How to set it up”</string>
+    <string name="toast_launch_restored">Put %1$d launch entries back. Reload the library in your frontend.</string>
+    <string name="shim_guide_title">First-time setup</string>
+    <string name="shim_guide_core_title">Core setup</string>
+    <string name="shim_guide_start">Start setup</string>
+    <string name="shim_guide_retroarch">In RetroArch:\n\n1. Main Menu → Load Core → Install or Restore a Core, and pick\n%1$s\n\n2. Main Menu → Load Core, and select “Nintendo - Game Boy Advance (VBA-M) (RetroAI)”.\nMake sure it says RetroAI — the wrong core will not set anything up.</string>
+    <string name="shim_guide_launcher">In your launcher:\n\nCome back to this app and press “2 · Update the launcher”.</string>
+    <string name="reload_notice_title">Reload your library</string>
+    <string name="reload_notice_body">Go back to Pegasus: Settings → Reload.\n\nIf you are running the original Pegasus rather than a modified build, ignore this.</string>
+    <string name="capture_needed_title">This console needs screen recording</string>
+    <string name="capture_needed_body">It is drawn on the GPU, so the picture cannot be taken from inside the emulator. Screen recording works for it — Android will ask for permission next.</string>
+    <string name="capture_ready_title">One more step</string>
+    <string name="capture_ready_body">Make sure RetroArch is closed. Launch the game again from the frontend.</string>
+    <string name="shim_guide_ok">Got it</string>
+    <string name="shim_guide_body_restore">Every launch entry goes back to its real core, and any RetroArch config this app wrote is taken back off.</string>
+    <string name="shim_link_stop">Disconnect</string>
+    <string name="shim_link_dump">Dump next frame</string>
+    <string name="shim_link_idle">Not running.</string>
+    <string name="shim_link_notification">Waiting for the emulator</string>
 </resources>

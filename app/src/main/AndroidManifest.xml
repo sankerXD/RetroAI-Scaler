@@ -8,6 +8,17 @@
     <!-- Foreground Service Permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!--
+      Loopback only, and nothing else. The libretro shim runs inside
+      RetroArch's process and hands frames over 127.0.0.1 (NewSolution.md
+      §4.4); AF_INET sockets need the inet GID, which this permission is, so
+      there is no way to open even a loopback socket without asking for it.
+      Nothing in this app contacts the network - the listener is bound to
+      127.0.0.1 explicitly, never the wildcard address.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Notifications for Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -94,6 +105,21 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!--
+          The shim's frame source. Foreground because it has to keep listening
+          while RetroArch is the app in front - which is exactly when a plain
+          background thread is frozen on Android 12+.
+        -->
+        <service
+            android:name=".shim.ShimFrameService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local loopback frame link for the libretro shim frame source" />
+        </service>
 
     </application>
 

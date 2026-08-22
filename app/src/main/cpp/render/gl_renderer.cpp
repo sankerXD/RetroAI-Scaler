@@ -2217,7 +2217,10 @@ bool GlRenderer::renderFrame(GLuint externalTexId, int frameWidth, int frameHeig
     }
 
     glViewport(0, 0, screenWidth_, screenHeight_);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    // Opaque black outside the output rect in shim mode - see
+    // setLetterboxOpaque. Transparent everywhere else, which is the safety
+    // default the whole service is built on.
+    glClearColor(0.0f, 0.0f, 0.0f, letterboxOpaque_ ? 1.0f : 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     glUseProgram(oesPassProgram_);

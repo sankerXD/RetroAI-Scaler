@@ -28,12 +28,19 @@ import androidx.core.app.NotificationCompat
 import com.retroai.scaler.MainActivity
 import com.retroai.scaler.R
 import com.retroai.scaler.capture.CaptureBridge
+import com.retroai.scaler.capture.FrameSource
+import com.retroai.scaler.shim.ShimFrameService
+import com.retroai.scaler.shim.ShimFrameSource
+import com.retroai.scaler.detector.HardwareCoreNotice
 import com.retroai.scaler.detector.ForegroundAppMonitor
 import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
 import com.retroai.scaler.ui.CaptureMode
+import com.retroai.scaler.ui.ConsoleType
+import com.retroai.scaler.ui.RenderProfile
 import com.retroai.scaler.ui.LocaleHelper
 import com.retroai.scaler.ui.ProfilePreference
+import com.retroai.scaler.ui.consoleForCore
 import com.retroai.scaler.jni.NativeBridge
 import com.retroai.scaler.ui.FloatingBallManager
 
@@ -119,6 +126,8 @@ class OverlayService : Service(), SurfaceHolder.Callback {
          */
         private const val PASSTHROUGH_ALPHA = 0.5f
 
+        /** Start with the libretro shim as the frame source, not the screen. */
+        const val EXTRA_SHIM_MODE = "extra_shim_mode"
         const val EXTRA_PROJECTION_DATA = "extra_projection_data"
         const val EXTRA_PROJECTION_RESULT_CODE = "extra_projection_result_code"
         const val ACTION_OPEN_MENU = "com.retroai.scaler.ACTION_OPEN_MENU"
@@ -148,6 +157,25 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     private var isRecreatingOverlay = false
     private var floatingBallManager: FloatingBallManager? = null
     private var captureBridge: CaptureBridge? = null
+    private var shimSource: ShimFrameSource? = null
+
+    /**
+     * Whichever source is live. The watchdog, the pause/resume path and the GL
+     * teardown all go through this and must not know which one it is.
+     */
+    private val frameSource: FrameSource?
+        get() = shimSource ?: captureBridge
+
+    /**
+     * Shim mode: frames come from inside RetroArch, not from the screen.
+     *
+     * Everything the capture architecture needed in order to keep the sampled
+     * region and the painted region apart stops applying (AGENT.md §1), so
+     * this flag turns off the viewport rewrite, the viewport detection, the
+     * integer snapping and the capture-mode probe in one place rather than
+     * leaving each of them to work out that it has nothing to do.
+     */
+    private var shimMode = false
     private var mediaProjection: MediaProjection? = null
 
     private var foregroundMonitor: ForegroundAppMonitor? = null
@@ -183,29 +211,164 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      */
     private val watchdogRunnable = object : Runnable {
         override fun run() {
-            val bridge = captureBridge
+            /*
+             * A core that draws on the GPU hands libretro a sentinel instead of
+             * pixels, so there is nothing for the shim to send and no amount of
+             * waiting will produce one. Say that plainly and stop, rather than
+             * letting the stall detector arrive four seconds later and blame
+             * screen capture - which is not running at all in this mode.
+             *
+             * This cannot fall back on its own: capture needs the projection
+             * consent dialog, and a Service has nowhere to show it. So the job
+             * here is to tell the player exactly which button to press instead.
+             */
+            if (shimMode && ShimFrameService.hardwareRenderedCore) {
+                /*
+                 * Ask for screen capture right here, rather than telling
+                 * someone to go and find a button.
+                 *
+                 * The consent dialog needs an Activity and a Service has none -
+                 * but it can start one, and this app holds SYSTEM_ALERT_WINDOW,
+                 * which is one of the exemptions from the background
+                 * activity-start restrictions. So the only part that genuinely
+                 * cannot be automatic is the tap on the system dialog.
+                 */
+                /*
+                 * Say so and stop. Do not try to switch modes here.
+                 *
+                 * Pulling this app to the front mid-game to ask for capture
+                 * consent was tried and abandoned. Every failure lived in that
+                 * transition: capture starting while this app is what is on
+                 * screen, the console preference not reaching the running
+                 * service, the last frame frozen because the thread that could
+                 * clear it had already been torn down. And the convenience it
+                 * bought was small - RetroArch has to be closed and the game
+                 * restarted either way, because it reads the new viewport only
+                 * when it loads content.
+                 *
+                 * So: the player closes RetroArch and starts capture mode from
+                 * the app, which is the clean state that machinery was built
+                 * for - app in front, no game running, nothing to race.
+                 */
+                /*
+                 * Offer screen recording only where it would actually work.
+                 *
+                 * A GPU core means direct mode is out; it does NOT mean capture
+                 * is in. Capture has to park RetroArch in a corner at native
+                 * size and fit the enhanced picture in what is left (§1), and
+                 * for a whole class of platforms there is no such room: a
+                 * Dreamcast is 640x480 native, a PSP 480x272, a GameCube, Wii,
+                 * Wii U, DS or 3DS bigger or double-screened. On a 1280x960
+                 * panel a Dreamcast's largest free band is 1280x464 - eight
+                 * pixels short of even a 1:1 output.
+                 *
+                 * Consoles we cannot name land here too, and take the same
+                 * path. "I do not recognise this core" is a fact about us; the
+                 * player only needs to know that this platform is not one this
+                 * app can help with, and that nothing is left running.
+                 *
+                 * Offering the card anyway is worse than not offering it: the
+                 * player grants screen recording, closes RetroArch, launches
+                 * the game again, and gets a refusal at the end of all that.
+                 */
+                val core = ShimFrameService.coreFile
+                val console = core?.let { consoleForCore(it) }
+                val servable = captureCouldServe(console)
+                Log.w(
+                    TAG,
+                    "core renders on the GPU (core=$core console=$console " +
+                        "servable=$servable) - no frames; stopping"
+                )
+                if (servable) {
+                    // With the core's name: the capture route configures
+                    // RetroArch for whatever console THIS core is, and by the
+                    // time the player presses the button the static holding it
+                    // may be gone.
+                    HardwareCoreNotice.remember(core)
+                } else {
+                    HardwareCoreNotice.forget()
+                }
+                // On the source's own thread, while it still exists: after
+                // stopSelf there is nowhere left to run it and the last frame
+                // stays on the glass (AGENT.md §10.3b).
+                frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() }
+                Toast.makeText(
+                    this@OverlayService,
+                    getString(
+                        if (servable) R.string.toast_shim_hw_core
+                        else R.string.toast_shim_hw_core_unsupported
+                    ),
+                    Toast.LENGTH_LONG
+                ).show()
+                // The link service goes with it - "AI enhancement has stopped"
+                // has to be true of everything - but that is onDestroy's job
+                // now, for every exit rather than this one.
+                stopSelf()
+                return
+            }
+
+            val bridge = frameSource
             // A paused pipeline produces no frames by design - do not let the
             // stall detector interpret that as a broken pipeline.
             if (bridge != null && !bridge.isPaused) {
                 val now = SystemClock.elapsedRealtime()
-                if (bridge.renderedFrames == 0L && now - bridge.startedAtMs > FIRST_FRAME_TIMEOUT_MS) {
+                val firstFrameTimeout = bridge.firstFrameTimeoutMs
+                if (firstFrameTimeout > 0L &&
+                    bridge.renderedFrames == 0L &&
+                    now - bridge.startedAtMs > firstFrameTimeout) {
                     Log.e(TAG, "No frame ever reached the renderer - shutting down.")
                     nativeBridge.nativeClearOverlay()
+                    // Two very different causes, so two different messages.
+                    // "check your screen recording permission" is actively
+                    // misleading in a mode that never asked for one.
                     Toast.makeText(
                         this@OverlayService,
-                        getString(R.string.toast_no_frames),
+                        getString(
+                            if (shimMode) R.string.toast_shim_no_frames
+                            else R.string.toast_no_frames
+                        ),
                         Toast.LENGTH_LONG
                     ).show()
                     stopSelf()
                     return
                 }
 
+                // The threshold belongs to the source, not to the watchdog:
+                // for a screen mirror this long a silence is a fault, for the
+                // shim it is RetroArch's menu being open and the overlay has to
+                // get out of the way fast enough to be usable (§4.7).
+                val stallMs = bridge.frameStallTimeoutMs
                 val idleMs = now - bridge.lastFrameAtMs
-                if (idleMs > FRAME_STALL_TIMEOUT_MS && !isOverlayCleared) {
-                    Log.w(TAG, "No frame for ${idleMs}ms - wiping overlay transparent.")
-                    nativeBridge.nativeClearOverlay()
+                if (idleMs > stallMs && !isOverlayCleared) {
+                    if (!shimMode) Log.w(TAG, "No frame for ${idleMs}ms - wiping overlay transparent.")
+                    /*
+                     * ON the thread that owns the EGL context, not from here.
+                     *
+                     * This ran inline on the main thread for a long time and
+                     * looked fine, because under screen capture it took ten
+                     * seconds of silence to reach and almost never did.
+                     * ensureEglContextCurrent() fails silently when the context
+                     * is current on another thread, the wipe becomes a no-op,
+                     * and the last frame stays frozen on the glass -
+                     * AGENT.md §10.3b, written down and then not followed here.
+                     * The shim asks for this every time a menu opens, which is
+                     * what finally made it visible.
+                     */
+                    if (!bridge.runOnCaptureThread { nativeBridge.nativeClearOverlay() }) {
+                        Log.w(TAG, "no frame thread to wipe on - doing it inline")
+                        nativeBridge.nativeClearOverlay()
+                    }
+                    // Hand back touches and opacity while the picture is not
+                    // ours: with the shim this is RetroArch's own menu showing
+                    // through, and an invisible full-screen overlay that still
+                    // swallows taps would make it unusable for anyone not on a
+                    // handheld with physical buttons.
+                    if (shimMode) setOverlayObscuring(false)
                     isOverlayCleared = true
-                } else if (idleMs <= FRAME_STALL_TIMEOUT_MS) {
+                } else if (idleMs <= stallMs) {
+                    if (isOverlayCleared && shimMode && isRenderingActive) {
+                        setOverlayObscuring(true)
+                    }
                     isOverlayCleared = false
                 }
             }
@@ -249,8 +412,24 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * the newest is older than 15 days. Runs off the main thread: it walks a
      * few hundred files on external storage.
      */
+    /**
+     * Everything that touches RetroArch's config files, in order, on one
+     * thread.
+     *
+     * Order is the point. The snapshot has to be taken before a patch is
+     * written, or the snapshot records our own viewport as the user's original.
+     * These used to be two threads started from two lifecycle callbacks
+     * (onCreate and onStartCommand) with nothing sequencing them.
+     *
+     * Not the restore: that has to outlive the service, so it keeps its own
+     * non-daemon thread.
+     */
+    private val configExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "RAConfig").apply { isDaemon = true }
+    }
+
     private fun ensureConfigBackup() {
-        Thread {
+        configExecutor.execute {
             try {
                 val manager = RetroArchConfigManager(this)
 
@@ -278,30 +457,97 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                     }
                 }
 
-                applyConfigOnStart(manager)
+                // NOT applyConfigOnStart here. onCreate always runs before
+                // onStartCommand, so the frame source is not known yet, and
+                // this ran unconditionally - which is how direct mode still
+                // announced "configured FC, restart RetroArch", from a code
+                // path that had already been told not to run. onStartCommand
+                // queues it behind this one once it knows it is capture that is
+                // starting.
             } catch (e: Exception) {
                 Log.e(TAG, "config backup failed", e)
             }
-        }.apply { name = "ConfigBackup"; isDaemon = true }.start()
+        }
     }
 
     /**
-     * Configures RetroArch the moment the enhancer starts, so the very first
-     * run works: without this the user has to start the app, open the menu,
-     * press 自动写入, then restart RetroArch before anything lines up.
+     * Shrinks RetroArch into its corner, the moment capture starts.
      *
-     * Uses the persisted platform choice - the floating menu may never have
-     * been opened in this session.
+     * This has to happen HERE and not one step later, because RetroArch reads
+     * its overrides only when it loads content: the player is about to be told
+     * to close it and launch the game again, and that launch is the one chance
+     * this write has to take effect.
+     *
+     * It had no call site at all between 2605148 and this commit. The symptom
+     * was the whole capture route quietly not working: RetroArch drew full
+     * screen, and the enhancer magnified whatever happened to be in the
+     * bottom-right 320x240 of it - on the test device, the copyright line of a
+     * PlayStation title screen, blown up 2x in a box in the middle of the
+     * picture. Nothing was wrong with the geometry or the capture mode; the
+     * emulator had simply never been asked to move.
      */
     private fun applyConfigOnStart(manager: RetroArchConfigManager) {
-        val profile = ProfilePreference.load(this)
-        val folders = manager.coreFoldersFor(profile.console)
-        if (folders.isEmpty()) {
-            Log.w(TAG, "no core config folder for ${profile.console.name}, skipping auto-write")
+        /*
+         * Shim mode leaves RetroArch's config alone entirely.
+         *
+         * Every key this writes exists to serve screen capture: the custom
+         * viewport shrinks RetroArch into a corner so our output has somewhere
+         * to go that is not on top of what we are sampling, and
+         * video_shader_enable=false keeps RetroArch's own shaders out of the
+         * picture we sample. The shim takes the core's frame before either
+         * happens, so RetroArch can go back to drawing normally at whatever
+         * size and with whatever shader the player chose - and every key we do
+         * not write is one less thing to restore afterwards.
+         */
+        if (shimMode) {
+            Log.i(TAG, "shim mode - leaving RetroArch's config untouched")
+            return
+        }
+
+        /*
+         * The console comes from the core that is actually running. Nothing
+         * else is allowed to decide it.
+         *
+         * The stored "current console" is a leftover from whatever was played
+         * last, and using it is not a smaller mistake than not writing at all:
+         * it writes a PlayStation viewport into the Game Boy Advance override,
+         * where it does nothing for the session that wrote it and then squeezes
+         * a GBA into a corner days later, on a platform the player never
+         * connected to screen recording. That happened, and it took a restore
+         * bug hunt to find.
+         *
+         * So: no core, or a core that maps to no console -> write NOTHING and
+         * say so. A capture session that does not line up is a bad session; a
+         * viewport written into the wrong console's config is damage that
+         * outlives it.
+         */
+        val core = ShimFrameService.coreFile ?: HardwareCoreNotice.coreFile()
+        val console = core?.let { consoleForCore(it) }
+        if (console == null) {
+            Log.w(TAG, "not writing RetroArch's viewport: core=$core maps to no console")
             mainHandler.post {
                 Toast.makeText(
                     this,
-                    getString(R.string.toast_no_core_dir, profile.console.label(this)),
+                    getString(R.string.toast_unknown_core, core ?: "?"),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return
+        }
+        if (console != ProfilePreference.currentConsole(this)) {
+            Log.i(TAG, "capture: $core is ${console.name}; switching the profile to it")
+            ProfilePreference.setConsole(this, console)
+            mainHandler.post { floatingBallManager?.reloadProfile() }
+        }
+
+        val profile = ProfilePreference.load(this)
+        val folders = manager.coreFoldersFor(console)
+        if (folders.isEmpty()) {
+            Log.w(TAG, "no core config folder for ${console.name}, skipping auto-write")
+            mainHandler.post {
+                Toast.makeText(
+                    this,
+                    getString(R.string.toast_no_core_dir, console.label(this)),
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -310,20 +556,79 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         val result = manager.applyViewport(
             folders,
-            profile.console.nativeWidth * profile.sourceScale,
-            profile.console.nativeHeight * profile.sourceScale,
+            console.nativeWidth * profile.sourceScale,
+            console.nativeHeight * profile.sourceScale,
             profile.effectiveBiasX,
             profile.effectiveBiasY,
             profile.disableRaShader
         )
-        Log.i(TAG, "auto-write on start: ${result.message}")
-        mainHandler.post {
-            Toast.makeText(
-                this,
-                if (result.ok) getString(R.string.toast_configured_restart, profile.console.label(this)) else result.message,
-                Toast.LENGTH_LONG
-            ).show()
+        Log.i(TAG, "capture: wrote the viewport for ${console.name}: ${result.message}")
+        // Only when it went wrong. The dialog the player is looking at right
+        // now already tells them the one thing they have to do next, and a
+        // toast repeating it in other words is how a screen becomes noise.
+        if (!result.ok) {
+            mainHandler.post {
+                Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
+            }
         }
+    }
+
+    /**
+     * Whether the capture route could produce anything worth showing for this
+     * console on this screen.
+     *
+     * The bar is a whole multiple of 2 or more: an enhanced picture the same
+     * size as the raw one, sitting next to the raw one, is not a reduced
+     * result. Below that there is nothing to offer and saying so early is the
+     * whole point - see the watchdog.
+     *
+     * A throwaway profile rather than the stored one, because the question is
+     * about a console the player has not selected and may never select. The
+     * fields that matter here (native size, source scale, corner, margin) are
+     * the defaults for every console anyway; the capture mode is not, and it
+     * decides whether the output has to stay clear of the capture window at
+     * all, so that one is read.
+     */
+    private fun captureCouldServe(console: ConsoleType?): Boolean {
+        if (console == null) return false
+        val probe = RenderProfile(
+            console = console,
+            captureMode = ProfilePreference.lastCaptureMode(this)
+        )
+        return probe.getOutputScale(screenWidth, screenHeight) >= 2
+    }
+
+    /**
+     * True once the emulator has actually been on screen in this capture
+     * session. Until then "not in the foreground" means the player is still on
+     * their way there - our own settings screen, the consent dialog, the
+     * frontend - and is not a session ending.
+     */
+    private var targetWasInForeground = false
+
+    /**
+     * True once the shim has been seen attached during this capture session,
+     * which is what makes its absence afterwards mean something.
+     */
+    private var sawShimLink = false
+
+    /**
+     * Ends a capture session: wipe, drop the notice, stop.
+     *
+     * The wipe has to run on the frame source's own thread while that thread
+     * still exists - it owns the EGL context, and ensureEglContextCurrent()
+     * fails silently anywhere else, which leaves the last frame frozen on the
+     * glass over whatever is really on screen (AGENT.md §10.3b, three times
+     * now). Everything else - restoring RetroArch's config, tearing down the
+     * projection - happens in onDestroy.
+     */
+    private fun endCaptureSession() {
+        frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() }
+        // Everything else a finished session has to clean up is in onDestroy,
+        // because this is only ONE of the four ways it can finish - the
+        // floating menu, the notification's Stop and the watchdog all call
+        // stopSelf() straight and would miss anything left here.
+        stopSelf()
     }
 
     /**
@@ -340,10 +645,61 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             target == null -> true
             else -> monitor.currentForegroundPackage() == target
         }
+
+        /*
+         * A capture session belongs to one launch of one game, and ends when
+         * the emulator EXITS - not when it stops being the foreground app.
+         *
+         * Those are two different facts and the first attempt used the second
+         * one for both, which broke switching away: open Recents, come back to
+         * this app, and the session ended underneath the player.
+         *
+         * It has to end on the exit, though. What a finished session leaves
+         * behind is configured for the console that just ran - RetroArch's
+         * viewport override written for it, our sampling rect predicted at its
+         * resolution, a projection still mirroring the screen - and launching
+         * anything else from the frontend resumes it on the spot. The reported
+         * symptom was a slab of raw RetroArch magnified into the middle of the
+         * enhanced picture: still sampling a PlayStation-sized rect out of a
+         * Game Boy Advance's full-screen frame.
+         *
+         * The shim link is what tells the two apart. Every game launched
+         * through the frontend loads our shim inside RetroArch's process, and
+         * it holds a socket to us for as long as that process lives - going to
+         * the background does not close it, and quitting does, whether or not
+         * anything got round to telling us. Nothing else available to an app
+         * can answer this: getRunningAppProcesses returns only our own process,
+         * and usage-stats events cannot separate an activity that stopped from
+         * one that was destroyed.
+         *
+         * Both latches are needed. `targetWasInForeground` because before the
+         * game is running "the link is down" only means the player is on their
+         * way there - past our settings screen, the consent dialog and the
+         * frontend, and past the deliberate close-and-relaunch we just asked
+         * for. `sawShimLink` because a session where the shim never connected
+         * at all (RetroArch started by hand, setup not done) has no signal to
+         * read, and must fall back to pausing rather than guessing.
+         */
+        if (!shimMode) {
+            if (shouldRender) targetWasInForeground = true
+            if (targetWasInForeground && ShimFrameService.connected) sawShimLink = true
+            if (targetWasInForeground && sawShimLink && !ShimFrameService.connected) {
+                Log.i(TAG, "capture: the shim link is gone - the emulator exited, ending the session")
+                endCaptureSession()
+                return
+            }
+        }
+
         if (shouldRender == isRenderingActive) return
 
         isRenderingActive = shouldRender
         Log.i(TAG, if (shouldRender) "Target app in foreground - resuming." else "Target app left - pausing.")
+
+        // Capture that was granted while this app was in front waits here for
+        // the emulator to come back. See startCapturePipeline.
+        if (shouldRender && captureBridge == null && mediaProjection != null) {
+            startCapturePipeline()
+        }
         applyRenderingState()
         updateNotification()
 
@@ -375,6 +731,10 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * for the emulator to have drawn a real frame, not a black one.
      */
     private fun scheduleAutoDetect() {
+        // Nothing to measure in shim mode: the frame arrives at exactly its
+        // native resolution, so the rect this pass exists to recover is
+        // already known to the pixel.
+        if (shimMode) return
         val manager = floatingBallManager ?: return
         if (manager.profile.detectedSourceRect != null) return
         mainHandler.removeCallbacks(autoDetectRunnable)
@@ -501,6 +861,10 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     }
 
     private fun scheduleCaptureModeProbe() {
+        // The probe asks whether our own overlay lands in the captured frame.
+        // Nothing is captured from the screen in shim mode, so the question has
+        // no meaning and the marker it paints would only flash on screen.
+        if (shimMode) return
         if (captureModeProbeRequested) return
         captureModeProbeRequested = true
         // After the auto-detect window, so the two readback users never overlap.
@@ -553,6 +917,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
      * content load, hence the prompt.
      */
     private fun rewriteRetroArchConfigForCaptureMode() {
+        if (shimMode) return
         Thread {
             try {
                 val profile = floatingBallManager?.profile ?: return@Thread
@@ -607,15 +972,15 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         if (isRenderingActive && !awaitingRaRestart) {
             setOverlayObscuring(true)
             nativeBridge.nativeSetRenderPaused(false)
-            captureBridge?.resumeCapture()
+            frameSource?.resumeCapture()
         } else {
-            captureBridge?.pauseCapture()
+            frameSource?.pauseCapture()
             // The wipe runs ON the capture thread, where the EGL context
             // already is. Doing it from here instead means handing the context
             // across threads and back on every app switch, and after that
             // round trip the renderer kept reporting healthy frames that never
             // reached the screen.
-            val bridge = captureBridge
+            val bridge = frameSource
             val wiped = bridge?.runOnCaptureThread {
                 nativeBridge.nativeSetRenderPaused(true)
             } ?: false
@@ -652,11 +1017,82 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             }
         }
 
+        if (intent?.getBooleanExtra(EXTRA_SHIM_MODE, false) == true) {
+            // No MediaProjection is requested, granted, or needed. The frames
+            // come from inside RetroArch.
+            shimMode = true
+            Log.i(TAG, "Starting in shim frame-source mode - no screen capture.")
+            startCapturePipeline()
+            return START_NOT_STICKY
+        }
+
         if (intent != null) {
             val resultCode = intent.getIntExtra(EXTRA_PROJECTION_RESULT_CODE, 0)
             @Suppress("DEPRECATION")
             val data = intent.getParcelableExtra<Intent>(EXTRA_PROJECTION_DATA)
             if (resultCode != 0 && data != null) {
+                // Screen capture arriving while the direct source is live is
+                // the GPU-core fallback being taken. Tear the old source down
+                // first: startCapturePipeline refuses to start while one
+                // exists, so without this the service would keep the direct
+                // source that has no frames to give and quietly ignore the
+                // projection the player just granted.
+                if (shimSource != null) {
+                    Log.i(TAG, "switching from the direct source to screen capture")
+                    frameSource?.pauseCapture()
+                    /*
+                     * Wipe the last frame WHILE the source thread still exists.
+                     *
+                     * That thread owns the EGL context, and clearing has to
+                     * happen on it (AGENT.md §10.3b). Tearing the source down
+                     * first leaves nowhere to run, the clear silently does
+                     * nothing, and the previous console's last frame stays
+                     * frozen on the glass over whatever is really on screen -
+                     * which here is this app's own settings page.
+                     */
+                    frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() }
+                    frameSource?.detachEglContext()
+                    stopFrameSource()
+                }
+                // The console was preselected from the core name a moment ago,
+                // in the activity. This is the copy that has to be told.
+                floatingBallManager?.reloadProfile()
+                shimMode = false
+                /*
+                 * None of the capture state survives the switch.
+                 *
+                 * The detected window belongs to whatever console was last
+                 * measured under capture, and the capture mode to whatever was
+                 * last probed - both from a different session, possibly a
+                 * different console. Carrying either across is how a
+                 * PlayStation ends up sampled through a window measured for a
+                 * Super Famicom, with the hole landing in the middle of the
+                 * picture instead of in a corner.
+                 */
+                floatingBallManager?.clearDetectedWindow()
+                /*
+                 * And start painting nothing.
+                 *
+                 * Screen capture mirrors the whole screen, and at this instant
+                 * the screen is our own settings page - the consent dialog just
+                 * closed on top of it. Carrying the previous session's "we are
+                 * rendering" state across meant the first captured frames were
+                 * of this app, blown up over itself. The foreground poll turns
+                 * it back on when the emulator returns, which is exactly when
+                 * the player restarts the game as instructed.
+                 */
+                isRenderingActive = false
+                applyRenderingState()
+                /*
+                 * Tell RetroArch where to draw, now.
+                 *
+                 * Queued behind the snapshot on the config thread, so the
+                 * backup is always of the file as the player had it. And before
+                 * the pipeline rather than after: the player is about to be
+                 * shown "close RetroArch and launch the game again", and that
+                 * relaunch is the only moment RetroArch will read this.
+                 */
+                configExecutor.execute { applyConfigOnStart(RetroArchConfigManager(this)) }
                 val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = mpManager.getMediaProjection(resultCode, data)
                 startCapturePipeline()
@@ -777,19 +1213,110 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     /** Pushes the current source/output geometry down to the renderer. */
     private fun pushGeometry() {
         val profile = floatingBallManager?.profile ?: return
+
+        if (shimMode) {
+            /*
+             * The whole of the capture geometry problem disappears here.
+             *
+             * Under MediaProjection the source rect had to be MEASURED out of a
+             * screenshot and snapped to an exact integer multiple of the native
+             * resolution, because two pixels of error accumulate into a
+             * one-texel drift by the bottom of the picture and every engine
+             * goes soft (AGENT.md §10.1). A shim frame IS the native
+             * resolution: the source rect is the whole buffer, exactly, with
+             * nothing to detect and nothing to snap.
+             *
+             * protectSource is false because the reason it existed is gone. It
+             * punched a hole in our own output so the next captured frame would
+             * not contain the previous one - self-feedback. Nothing here is
+             * captured from the screen, so there is no loop to break, and the
+             * output covers the whole display.
+             */
+            val out = outputRectForShim()
+            nativeBridge.nativeSetGeometry(
+                0, 0, shimFrameWidth, shimFrameHeight,
+                out.left, out.top, out.width(), out.height(),
+                false,
+                false,
+                true
+            )
+            return
+        }
+
         val src = profile.getSourceRect(screenWidth, screenHeight)
         val out = profile.getOutputRect(screenWidth, screenHeight)
+        if (out.isEmpty) {
+            // No whole multiple fits beside the capture window. Painting the
+            // screen anyway would lay our output over what we sample (§1), so
+            // there is nothing to draw. MainActivity refuses to start such a
+            // session at all; this is the backstop for getting here another way
+            // - a rotation, a console switch under a running session.
+            Log.e(TAG, "no output fits beside the capture window for ${profile.console.name}")
+            if (frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() } != true) {
+                nativeBridge.nativeClearOverlay()
+            }
+            return
+        }
         nativeBridge.nativeSetGeometry(
             src.left, src.top, src.width(), src.height(),
             out.left, out.top, out.width(), out.height(),
             profile.showSourceGuide,
-            profile.captureMode == CaptureMode.WHOLE_SCREEN
+            profile.captureMode == CaptureMode.WHOLE_SCREEN,
+            false
         )
     }
 
+    private val shimFrameWidth: Int
+        get() = ShimFrameService.lastWidth.takeIf { it > 0 }
+            ?: floatingBallManager?.profile?.console?.nativeWidth ?: 240
+    private val shimFrameHeight: Int
+        get() = ShimFrameService.lastHeight.takeIf { it > 0 }
+            ?: floatingBallManager?.profile?.console?.nativeHeight ?: 160
+
+    /**
+     * The largest whole multiple of the native resolution that fits the screen,
+     * centred.
+     *
+     * Integer, for the reason the capture path already records: a fractional
+     * scale means a game pixel does not land on a whole number of screen
+     * pixels, every pixel boundary gets interpolated, and the picture is soft.
+     * Centred, because with nothing to avoid there is nothing to bias towards.
+     */
+    private fun outputRectForShim(): android.graphics.Rect {
+        val nw = shimFrameWidth
+        val nh = shimFrameHeight
+        val k = maxOf(1, minOf(screenWidth / nw, screenHeight / nh))
+        val w = nw * k
+        val h = nh * k
+        val x = (screenWidth - w) / 2
+        val y = (screenHeight - h) / 2
+        return android.graphics.Rect(x, y, x + w, y + h)
+    }
+
     private fun startCapturePipeline() {
+        if (frameSource != null || !isSurfaceReady) return
+
+        if (shimMode) {
+            val source = ShimFrameSource(nativeBridge) { w, h ->
+                // Arrives on the frame thread; everything it touches - the
+                // profile, the renderer config, the geometry - belongs to the
+                // main thread.
+                mainHandler.post {
+                    HardwareCoreNotice.forget()
+                    val adopted = floatingBallManager
+                        ?.adoptNativeSize(w, h, ShimFrameService.coreFile)
+                    if (adopted == true) pushGeometry()
+                }
+            }
+            source.start()
+            shimSource = source
+            pushGeometry()
+            applyRenderingState()
+            Log.i(TAG, "Pipeline started on the libretro shim frame source.")
+            return
+        }
+
         val mp = mediaProjection ?: return
-        if (captureBridge != null || !isSurfaceReady) return
 
         val bridge = CaptureBridge(
             mp,
@@ -894,7 +1421,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         // Suspend delivery first: frames sized for the old screen must not
         // reach a renderer that is being rebuilt for the new one.
-        val bridge = captureBridge
+        val bridge = frameSource
         bridge?.pauseCapture()
 
         // nativeRelease() while the EGL context is still current on the capture
@@ -928,7 +1455,12 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         floatingBallManager?.pushAllSettings()
         pushGeometry()
 
-        if (bridge != null && !bridge.resizeTo(width, height, screenDensityDpi)) {
+        // Only the screen mirror is sized in screen pixels. A shim frame is
+        // its own native resolution whatever the panel is doing, so rotation
+        // changes nothing about the source - pushGeometry above has already
+        // recentred the OUTPUT, which is the only part that moved.
+        val mirror = captureBridge
+        if (mirror != null && !mirror.resizeTo(width, height, screenDensityDpi)) {
             Log.e(TAG, "capture resize failed after rotation - stopping.")
             Toast.makeText(this, R.string.toast_rotate_capture_failed, Toast.LENGTH_LONG).show()
             stopSelf()
@@ -952,15 +1484,24 @@ class OverlayService : Service(), SurfaceHolder.Callback {
             // the VirtualDisplay, and rebuilding it means a second
             // createVirtualDisplay() on the same MediaProjection - which is
             // exactly what the resize path was written to avoid.
-            captureBridge?.pauseCapture()
-            captureBridge?.detachEglContext()
+            frameSource?.pauseCapture()
+            frameSource?.detachEglContext()
             nativeBridge.nativeRelease()
             return
         }
 
+        stopFrameSource()
+        nativeBridge.nativeRelease()
+    }
+
+    /** Tears down whichever source is live. Both are always cleared: only one
+     *  is ever set, but leaving a stale reference behind would let
+     *  startCapturePipeline() decide a pipeline is already running. */
+    private fun stopFrameSource() {
+        shimSource?.stopCapture()
+        shimSource = null
         captureBridge?.stopCapture()
         captureBridge = null
-        nativeBridge.nativeRelease()
     }
 
     /**
@@ -1093,6 +1634,30 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
     override fun onDestroy() {
         restoreConfigOnStop()
+
+        /*
+         * A capture session is over here, however it got here.
+         *
+         * These two used to live in endCaptureSession(), which is only the
+         * route where the emulator exits. Stop from the floating menu, from the
+         * notification, or from the watchdog and they were skipped: the session
+         * was gone, RetroArch was closed, and the special-mode card was still
+         * on the main screen offering screen recording for a game that had
+         * finished - which is what was reported. Cleanup belongs on the path
+         * every exit takes, not on the tidiest one.
+         *
+         * `!shimMode` matters: the notice is SET by the direct-mode watchdog
+         * meeting a GPU core, and that watchdog stops the service one line
+         * later. Clearing it here unconditionally would erase the notice at the
+         * exact moment it was raised, and the card would never appear at all.
+         */
+        if (!shimMode) HardwareCoreNotice.forget()
+        // The link service outlives nothing here: in direct mode it is the
+        // frame source with no consumer left, and in capture mode it was only
+        // ever the emulator's heartbeat. Either way its "waiting for the
+        // emulator" notification must not sit there after everything stopped.
+        stopService(Intent(this, ShimFrameService::class.java))
+
         mainHandler.removeCallbacks(watchdogRunnable)
         mainHandler.removeCallbacks(foregroundPollRunnable)
         mainHandler.removeCallbacks(autoDetectRunnable)
@@ -1101,8 +1666,7 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         // Order matters: stop producing frames, then wipe the overlay, then
         // tear down GL, then finally detach the window.
-        captureBridge?.stopCapture()
-        captureBridge = null
+        stopFrameSource()
         mediaProjection?.stop()
         mediaProjection = null
 

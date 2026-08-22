@@ -111,6 +111,18 @@
                     app:chipStrokeWidth="1.5dp" />
 
 <com.google.android.material.chip.Chip
+                    android:id="@+id/chipScale5x"
+                    style="@style/Widget.MaterialComponents.Chip.Choice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="5x"
+                    android:textColor="@color/chip_text_color"
+                    app:checkedIconVisible="false"
+                    app:chipBackgroundColor="@color/chip_bg_color"
+                    app:chipStrokeColor="@color/chip_stroke_color"
+                    app:chipStrokeWidth="1.5dp" />
+
+                <com.google.android.material.chip.Chip
                     android:id="@+id/chipScale6x"
                     style="@style/Widget.MaterialComponents.Chip.Choice"
                     android:layout_width="wrap_content"
@@ -232,50 +244,6 @@
                     app:chipStrokeWidth="1.5dp" />
             </com.google.android.material.chip.ChipGroup>
         </HorizontalScrollView>
-        </LinearLayout>
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:background="@drawable/bg_menu_section"
-            android:orientation="vertical"
-            android:padding="12dp">
-
-            <TextView
-                style="@style/MenuSectionLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/menu_section_viewport" />
-
-            <Button
-                android:id="@+id/btnDetectSource"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="38dp"
-                android:text="@string/menu_detect_source"
-                android:textColor="@color/primary"
-                android:textSize="12sp"
-                app:strokeColor="@color/primary" />
-            <Button
-                android:id="@+id/btnToggleGuide"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="38dp"
-                android:layout_marginTop="6dp"
-                android:text="@string/menu_show_guide"
-                android:textColor="@color/primary"
-                android:textSize="12sp"
-                app:strokeColor="@color/primary" />
-            <Button
-                android:id="@+id/btnRestoreRaConfig"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="38dp"
-                android:layout_marginTop="6dp"
-                android:text="@string/menu_restore_ra_config"
-                android:textColor="@color/accent_orange"
-                android:textSize="12sp"
-                app:strokeColor="@color/accent_orange" />
         </LinearLayout>
         <LinearLayout
             android:layout_width="match_parent"

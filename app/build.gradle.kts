@@ -116,7 +116,38 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    // The shim binary ships INSIDE the APK, as an asset.
+    //
+    // §12 of the design book says the shim must not end up in the APK, and that
+    // was about the wrong thing: it must not be built by the app's CMake and
+    // land in lib/ as if it were one of our native libraries. It very much has
+    // to be distributed, because installing it into RetroArch is a file the
+    // player has to pick, and they have to get that file from somewhere.
+    //
+    // Generated rather than committed, so there is one source of truth and no
+    // way for a stale copy to ship. shim/build.sh refuses to produce a binary
+    // RetroArch would reject, so that gate applies to the packaged copy too.
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/shimAssets"))
 }
+
+val buildShim = tasks.register<Exec>("buildShim") {
+    group = "build"
+    description = "Builds the libretro shim and stages it as an APK asset."
+    commandLine("bash", "${rootProject.projectDir}/shim/build.sh")
+    doLast {
+        val out = layout.buildDirectory.dir("generated/shimAssets/shim").get().asFile
+        out.mkdirs()
+        val built = File(rootProject.projectDir, "build-shim/vbam_shim_libretro_android.so")
+        if (!built.isFile) {
+            throw GradleException("shim/build.sh reported success but produced no binary at $built")
+        }
+        built.copyTo(File(out, built.name), overwrite = true)
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+    .configureEach { dependsOn(buildShim) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
@@ -169,6 +200,21 @@ val checkScrollEstimator = tasks.register<Exec>("checkScrollEstimator") {
 
 tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
     .configureEach { dependsOn(checkShaders, checkShadingParity, checkScrollEstimator) }
+
+// Lint runs on DEBUG assembly, not just on release.
+//
+// It exists here for one class of bug: an API newer than minSdk. Those compile
+// without a murmur against compileSdk 34 and throw NoSuchMethodError on the
+// device, which is a handheld an hour of round trips away. One shipped that
+// way - Arrays.equals(byte[], int, int, byte[], int, int) is Java 9, so API 33,
+// against minSdk 30 - and it took the frame link down once per frame while
+// reading, on a machine that could have been told in thirty seconds.
+//
+// Debug rather than release because debug is what gets installed and tested.
+// Gradle caches the result, so an unchanged build skips it; only changed
+// sources pay.
+tasks.matching { it.name == "assembleDebug" }
+    .configureEach { dependsOn("lintDebug") }
 
 // Refuse to assemble a release without real signing credentials.
 //

@@ -68,7 +68,7 @@
                         android:layout_marginStart="12dp"
                         android:text="@string/status_service_stopped"
                         android:textColor="@color/text_primary"
-                        android:textSize="16sp"
+                        android:textSize="20sp"
                         android:textStyle="bold" />
                 </LinearLayout>
 
@@ -81,20 +81,163 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 
-                <TextView
-                    android:id="@+id/tvUsageGuide"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:lineSpacingExtra="3dp"
-                    android:text="@string/usage_hint"
-                    android:textColor="@color/accent_green_dim"
-                    android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- Console Card: picked here so pressing start can already write
-                 RetroArch's config and work out the output placement. -->
+            <!--
+                Setup. Directly under the status card because it is the one
+                thing a new install needs doing, and irrelevant once done -
+                at which point it is just a line saying so.
+            -->
             <LinearLayout
+                android:id="@+id/cardSetup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/shim_setup_title"
+                    android:textColor="@color/primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+
+                <!-- Hidden as a row once setup is done: two gone buttons still
+                     leave their margin behind, as a gap above the status line
+                     with nothing in it. -->
+                <LinearLayout
+                    android:id="@+id/rowSetupButtons"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnShimProbe"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="@string/shim_setup_guide"
+                        android:textColor="@color/primary"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/btnShimStart"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/shim_apply"
+                        android:textColor="@color/primary"
+                        android:textSize="12sp" />
+
+                </LinearLayout>
+
+                <!--
+                    The state and the way to undo it, on one line.
+
+                    Once setup is done the two buttons above are gone and this
+                    row is the entire card: a sentence saying where things
+                    stand, and the one control that still applies, at the far
+                    end of it. Stacked, they read as two unrelated things.
+                -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvShimProbe"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="monospace"
+                        android:text="@string/shim_link_idle"
+                        android:textColor="@color/text_secondary"
+                        android:textIsSelectable="true"
+                        android:textSize="10sp" />
+
+                    <Button
+                        android:id="@+id/btnShimDump"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:minWidth="0dp"
+                        android:text="@string/shim_restore"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!--
+                Special modes. Absent unless something has made one necessary.
+
+                Screen recording is not a setting, it is the answer to one
+                situation: a core that renders on the GPU, which the direct
+                frame source cannot see into. Living in the setup card it read
+                as a third option to weigh up during setup, when it is neither
+                a choice nor part of setup - and it stayed on screen forever
+                afterwards, offering itself for consoles that have no use for
+                it.
+
+                The card exists exactly as long as the fact that produced it,
+                which is held in memory and dies with the process - so
+                restarting the app clears it, and meeting such a core again
+                brings it straight back.
+            -->
+            <LinearLayout
+                android:id="@+id/cardSpecial"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/special_mode_title"
+                    android:textColor="@color/accent_orange"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvSpecialMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/special_mode_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btnShimCapture"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/shim_use_capture"
+                    android:textColor="@color/accent_orange"
+                    android:textSize="12sp"
+                    app:strokeColor="@color/accent_orange" />
+            </LinearLayout>
+            <!--
+                Console Card. Hidden in direct mode, where the frames carry
+                their own resolution and nothing has to be declared in advance -
+                see FloatingBallManager.adoptNativeSize. Kept in the layout
+                because the capture route still needs it.
+            -->
+            <LinearLayout
+                android:id="@+id/cardConsole"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
@@ -148,6 +291,7 @@
 
             <!-- Permissions Card -->
             <LinearLayout
+                android:id="@+id/cardPermissions"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
@@ -312,6 +456,7 @@
                         android:textSize="12sp" />
                 </LinearLayout>
             </LinearLayout>
+
         </LinearLayout>
     </ScrollView>
 

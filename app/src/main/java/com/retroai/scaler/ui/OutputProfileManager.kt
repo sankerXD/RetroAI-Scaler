@@ -11,6 +11,35 @@ import com.retroai.scaler.R
  * outputs - everything downstream (capture window size, integer output factor,
  * the AI network's input) is derived from these numbers.
  */
+/**
+ * Which console a core emulates.
+ *
+ * Resolution alone cannot answer this, and the failure is not exotic: fceumm
+ * crops NES overscan by default and emits 248x224, which is nearer to SFC's
+ * 256x224 than to the NES's own 256x240 - so matching on size picked the wrong
+ * console for the commonest NES core there is. A core's name is not ambiguous,
+ * and the shim knows it, so it says so.
+ *
+ * Resolution still goes first, because it settles what a core name cannot:
+ * mGBA plays both Game Boy and Game Boy Advance, and only the frame size tells
+ * those apart.
+ */
+fun consoleForCore(coreFile: String): ConsoleType? =
+    when (coreFile.substringBefore("_libretro").removeSuffix("_shim")) {
+        "vbam", "gpsp", "mgba", "vba_next" -> ConsoleType.GBA
+        "gambatte", "sameboy", "gearboy" -> ConsoleType.GBC
+        "fceumm", "nestopia", "quicknes", "mesen", "fceux" -> ConsoleType.FC
+        "snes9x", "snes9x2010", "bsnes", "bsnes_mercury_balanced" -> ConsoleType.SFC
+        "genesis_plus_gx", "picodrive" -> ConsoleType.MD
+        "swanstation", "pcsx_rearmed", "mednafen_psx", "duckstation" -> ConsoleType.PS1
+        // Dreamcast. Every one of these renders on the GPU, so they can only
+        // ever arrive here through the capture route - which is exactly why
+        // they have to be recognised: an unknown core means the viewport is
+        // never written and RetroArch draws full screen.
+        "flycast", "flycast_gl", "redream" -> ConsoleType.DC
+        else -> null
+    }
+
 enum class ConsoleType(
     @StringRes val labelRes: Int,
     val nativeWidth: Int,
@@ -22,7 +51,8 @@ enum class ConsoleType(
     SFC(R.string.console_sfc, 256, 224, "8:7"),
     FC(R.string.console_fc, 256, 240, "4:3"),
     MD(R.string.console_md, 320, 224, "4:3"),
-    PS1(R.string.console_ps1, 320, 240, "4:3");
+    PS1(R.string.console_ps1, 320, 240, "4:3"),
+    DC(R.string.console_dc, 640, 480, "4:3");
 
     fun label(context: Context): String = context.getString(labelRes)
 
@@ -197,6 +227,15 @@ enum class AiScale(val factor: Int, val label: String) {
     X2(2, "2x"),
     X3(3, "3x"),
     X4(4, "4x"),
+
+    /**
+     * 1280x960 handhelds drawing a Game Boy Advance: 240x160 fits five times
+     * across and six down, so the picture is drawn at 5x - and there was no
+     * model for it, so the nearest one reconstructed onto a grid the picture
+     * was not drawn on. Now that the scale is picked from the measured
+     * geometry, every multiple that geometry can produce needs a model.
+     */
+    X5(5, "5x"),
 
     /**
      * Matches the output geometry on a 1080p handheld running GBA: the picture
@@ -399,14 +438,34 @@ data class RenderProfile(
             best = Rect(left, top, left + w, top + h)
         }
 
-        // Nothing fits even at 1x (tiny screen, oversized capture window):
-        // fall back to the whole screen so something is still shown.
-        return best ?: Rect(0, 0, screenWidth, screenHeight)
+        /*
+         * Nothing fits beside the capture window, at any whole multiple.
+         *
+         * This used to fall back to the whole screen "so something is still
+         * shown", and that is the one rect it must never be: the output would
+         * cover the very region we sample, the next captured frame would
+         * contain the previous one, and the picture washes out in a few frames
+         * (§1). Whole-screen capture has no way around that.
+         *
+         * It is reachable for real. A Dreamcast is 640x480 native, so on a
+         * 1280x960 panel the capture window takes a quarter of the screen and
+         * the largest free band is 1280x464 - eight pixels short of a 1x
+         * output. An empty rect says "there is nowhere to draw this", which is
+         * the truth, and the callers refuse rather than paint.
+         */
+        return best ?: Rect()
     }
 
-    /** Integer factor currently in use, for the UI. */
-    fun getOutputScale(screenWidth: Int, screenHeight: Int): Int =
-        (getOutputRect(screenWidth, screenHeight).width() / console.nativeWidth).coerceAtLeast(1)
+    /**
+     * Integer factor currently in use, or 0 when the output does not fit beside
+     * the capture window at all. Zero is a real answer, not a failure to
+     * compute one - see [getOutputRect].
+     */
+    fun getOutputScale(screenWidth: Int, screenHeight: Int): Int {
+        val out = getOutputRect(screenWidth, screenHeight)
+        if (out.isEmpty) return 0
+        return (out.width() / console.nativeWidth).coerceAtLeast(1)
+    }
 
     fun getSummaryText(context: Context, screenWidth: Int, screenHeight: Int): String {
         val out = getOutputRect(screenWidth, screenHeight)

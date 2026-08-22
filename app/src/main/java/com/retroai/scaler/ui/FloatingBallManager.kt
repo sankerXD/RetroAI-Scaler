@@ -9,6 +9,7 @@ import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -40,6 +41,7 @@ class FloatingBallManager(
     private val onServiceStopRequested: () -> Unit
 ) {
     companion object {
+        private const val TAG = "FloatingBall"
         private const val AUTO_HIDE_DELAY_MS = 3500L
         private const val BALL_SIZE_PX = 56
 
@@ -95,6 +97,20 @@ class FloatingBallManager(
     private var lastCaptureMessage: String? = null
 
     var profile: RenderProfile = ProfilePreference.load(context)
+
+    /**
+     * The real native resolution of the frames arriving, when we know it.
+     *
+     * With screen capture the player had to declare the console, because the
+     * whole viewport rewrite was computed from it before RetroArch ever drew
+     * anything. Frames from the emulator carry their own size, so this is
+     * measured instead of declared - and it has to be, because this number is
+     * uNativeRes: get it wrong and every engine samples off-grid and the
+     * picture goes soft, which is the same failure AGENT.md §10.1 describes
+     * from the other direction.
+     */
+    private var nativeSizeOverride: Pair<Int, Int>? = null
+    private var lastCoreFile: String? = null
         private set
 
     // Views
@@ -189,6 +205,96 @@ class FloatingBallManager(
      * Called by the service once the native renderer exists (model loading and
      * config pushes are no-ops before nativeInit).
      */
+    /**
+     * Takes the native resolution from the frames themselves.
+     *
+     * Where the size matches a console we know, its saved settings are loaded
+     * too, so switching from Game Boy to Mega Drive brings that console's mask
+     * and scanline choices with it - the per-console profiles keep working
+     * without anyone having to pick from a list.
+     *
+     * Switching at runtime is refused in capture mode for a reason that does
+     * not apply here: there, the console determined a viewport rewritten into
+     * RetroArch's config and only read at content load, so changing it mid-run
+     * left RetroArch drawing for the previous console. Direct mode writes no
+     * config at all, so following the frames is simply correct.
+     *
+     * A size we do not recognise - most arcade boards, and any console not in
+     * the six-entry list - still gets the right uNativeRes and keeps whatever
+     * profile is current. That is a strictly better answer than the capture
+     * path could give, where an unlisted console could not be played at all.
+     */
+    fun adoptNativeSize(width: Int, height: Int, coreFile: String?): Boolean {
+        if (width <= 0 || height <= 0) return false
+        if (nativeSizeOverride == (width to height) && coreFile == lastCoreFile) return false
+        nativeSizeOverride = width to height
+        lastCoreFile = coreFile
+
+        // Resolution first, because it settles what a core name cannot - mGBA
+        // plays both Game Boy and Game Boy Advance. Core name second, because
+        // it settles what resolution cannot: fceumm crops NES overscan to
+        // 248x224, which is nearer SFC's 256x224 than FC's own 256x240.
+        val matched = ConsoleType.entries.firstOrNull {
+            it.nativeWidth == width && it.nativeHeight == height
+        } ?: coreFile?.let { consoleForCore(it) }
+        if (matched != null && matched != profile.console) {
+            ProfilePreference.setConsole(context, matched)
+            profile = ProfilePreference.load(context)
+            /*
+             * The menu has to be told, or it keeps showing the previous
+             * console's answers.
+             *
+             * Settings are saved per console, so switching game legitimately
+             * loads different ones - but nothing was refreshing the controls,
+             * so the chips went on displaying whatever was last selected while
+             * the renderer used the values just loaded. Someone reads 5x off
+             * the menu on three consoles in a row and gets 4x, 3x and 6x, with
+             * the menu and the picture disagreeing and no way to tell which is
+             * lying.
+             */
+            menuView?.let {
+                syncMenuToProfile(it)
+                syncEngineChipToProfile()
+            }
+        }
+
+        // The scale is NOT set from the geometry. It follows the console, which
+        // is where the player's own choice is stored - so switching console
+        // brings back what they picked for it rather than a number derived
+        // behind their back and overwritten every time they change game.
+        Log.i(TAG, "frames are ${width}x$height from ${coreFile ?: "?"} -> " +
+            (matched?.name ?: "unrecognised, keeping ${profile.console.name}") +
+            ", output ${outputMultiple(width, height)}x, AI ${profile.aiScale.label}")
+        pushAllSettings()
+        return true
+    }
+
+    /** Whole output pixels covering one game pixel, at the current size. */
+    private fun outputMultiple(nativeWidth: Int, nativeHeight: Int): Int =
+        if (nativeWidth <= 0 || nativeHeight <= 0) 1
+        else minOf(screenWidth / nativeWidth, screenHeight / nativeHeight).coerceAtLeast(1)
+
+    /**
+     * Re-reads the saved settings, for when something outside changed which
+     * console is current.
+     *
+     * The profile here is an object loaded once; writing the preference does
+     * not reach it. So preselecting the console for the capture fallback set
+     * the preference to PlayStation while this went on holding a Famicom, and
+     * the viewport was computed 256x240 for a console that is 320x240.
+     */
+    fun reloadProfile() {
+        profile = ProfilePreference.load(context)
+        nativeSizeOverride = null
+        lastCoreFile = null
+        menuView?.let {
+            syncMenuToProfile(it)
+            syncEngineChipToProfile()
+        }
+        pushAllSettings()
+        Log.i(TAG, "profile reloaded for ${profile.console.name}")
+    }
+
     fun pushAllSettings() {
         // The engine owns its effects, including across a restart: a profile
         // saved while the lighting was still a separate switch would otherwise
@@ -405,6 +511,7 @@ class FloatingBallManager(
                     R.id.chipScale2x -> AiScale.X2
                     R.id.chipScale3x -> AiScale.X3
                     R.id.chipScale4x -> AiScale.X4
+                    R.id.chipScale5x -> AiScale.X5
                     R.id.chipScale6x -> AiScale.X6
                     else -> profile.aiScale
                 }
@@ -431,27 +538,17 @@ class FloatingBallManager(
                 applyRenderProfile()
             }
 
-                                                root.findViewById<Button>(R.id.btnToggleGuide).apply {
-            updateGuideButtonText(this)
-            setOnClickListener {
-                profile.showSourceGuide = !profile.showSourceGuide
-                updateGuideButtonText(this)
-                applyRenderProfile()
-                // The numbers behind the ring, so a misaligned capture window
-                // can be read off directly instead of through logcat.
-                Toast.makeText(
-                    context,
-                    profile.getSummaryText(context, screenWidth, screenHeight),
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }
-
-        root.findViewById<Button>(R.id.btnDetectSource).setOnClickListener { detectSourceWindow() }
-        root.findViewById<Button>(R.id.btnDetectSource).setOnLongClickListener {
-            clearDetectedWindow(); true
-        }
-        root.findViewById<Button>(R.id.btnRestoreRaConfig).setOnClickListener { restoreRetroArchConfig() }
+        /*
+         * The capture-window section is gone from the menu.
+         *
+         * Locating the game picture, showing the capture frame and restoring
+         * RetroArch's config were all answers to a problem that no longer
+         * exists: the picture comes from the emulator at its own resolution, so
+         * there is no window to find, nothing to line up, and no config of
+         * RetroArch's that we changed. detectSourceWindow(), the guide toggle
+         * and restoreRetroArchConfig() stay in this file - the capture route
+         * still needs every one of them.
+         */
 
         calibrateButton = root.findViewById<Button>(R.id.btnCalibrateAi).apply {
             setOnClickListener {
@@ -533,6 +630,17 @@ class FloatingBallManager(
      * because it is indistinguishable from one.
      */
     private fun syncScaleChipsEnabled(root: View) {
+        // Every scale stays on offer, including ones above the multiple the
+        // picture is drawn at.
+        //
+        // Hiding them was defensible on paper - reconstructing detail that is
+        // then minified away, onto a grid the output is not drawn on - and
+        // wrong in the eye. On a small panel a 6x reconstruction shown at 5x
+        // still looks sharper than a 5x one, and the non-integer step between
+        // them is not visible. The rule that actually matters is that the
+        // OUTPUT is a whole multiple of the native resolution; what the network
+        // reconstructs on the way there is a quality-for-cost trade, and the
+        // person looking at the screen is better placed to make it.
         val usable = profile.engine.usesNetwork
         val group = root.findViewById<ChipGroup>(R.id.chipGroupScale)
         for (i in 0 until group.childCount) {
@@ -730,6 +838,7 @@ class FloatingBallManager(
                 AiScale.X2 -> R.id.chipScale2x
                 AiScale.X3 -> R.id.chipScale3x
                 AiScale.X4 -> R.id.chipScale4x
+                AiScale.X5 -> R.id.chipScale5x
                 AiScale.X6 -> R.id.chipScale6x
             }
         )
@@ -747,6 +856,7 @@ class FloatingBallManager(
                 AiScale.X2 -> R.id.chipScale2x
                 AiScale.X3 -> R.id.chipScale3x
                 AiScale.X4 -> R.id.chipScale4x
+                AiScale.X5 -> R.id.chipScale5x
                 AiScale.X6 -> R.id.chipScale6x
             }
         )
@@ -860,6 +970,37 @@ class FloatingBallManager(
                     val detected = android.graphics.Rect(
                         rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]
                     )
+                    /*
+                     * A window covering the whole screen is not a capture
+                     * window - it is RetroArch drawing full screen because the
+                     * viewport override has not taken effect.
+                     *
+                     * §10.2's aspect-ratio gate rejects the menu case, and
+                     * cannot reject this one: a 4:3 console on a 4:3 panel is
+                     * an exact integer multiple of itself at full screen, so
+                     * 1280x960 reads as a perfectly good 4x PlayStation window.
+                     * Accepting it sets source equal to output, and with
+                     * protect on, the entire output is discarded - the enhancer
+                     * draws nothing at all and the screen shows RetroArch's own
+                     * picture, with no error anywhere saying why.
+                     *
+                     * Refusing says which of the two actually went wrong.
+                     */
+                    val screenArea = screenWidth.toLong() * screenHeight
+                    if (detected.width().toLong() * detected.height() > screenArea * 9 / 10) {
+                        Log.w(TAG, "detected ${detected.width()}x${detected.height()}" +
+                            " - that is the whole screen, so RetroArch is not in" +
+                            " its viewport; refusing it")
+                        restoreOwnWindowsAfterDetection(ballWasVisible, menuWasVisible)
+                        if (!silent) {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.toast_detect_fullscreen),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        return
+                    }
                     profile.detectedSourceRect = detected
                     applyRenderProfile()
                     restoreOwnWindowsAfterDetection(ballWasVisible, menuWasVisible)
@@ -912,7 +1053,7 @@ class FloatingBallManager(
         applyRenderProfile()
     }
 
-    private fun clearDetectedWindow() {
+    fun clearDetectedWindow() {
         profile.detectedSourceRect = null
         applyRenderProfile()
         Toast.makeText(context, R.string.toast_corner_restored, Toast.LENGTH_SHORT).show()
@@ -933,6 +1074,10 @@ class FloatingBallManager(
 
     /** Output pixels covering one game pixel - both retro effects scale with it. */
     private fun outputPixelsPerGamePixel(): Float {
+        // From the measured size when we have one: the retro effects are scaled
+        // by this, and with the picture coming from the emulator the declared
+        // console's dimensions are not what is on screen.
+        nativeSizeOverride?.let { (w, h) -> return outputMultiple(w, h).toFloat() }
         val out = profile.getOutputRect(screenWidth, screenHeight)
         if (profile.console.nativeWidth <= 0) return 0f
         return minOf(
@@ -949,10 +1094,12 @@ class FloatingBallManager(
         nativeBridge.nativeSetHd2d(profile.hd2dEnabled, profile.hd2dStrength)
         nativeBridge.nativeSetDof(profile.dofStrength)
         nativeBridge.nativeSetBloom(profile.bloomStrength)
+        val (nativeW, nativeH) = nativeSizeOverride
+            ?: (profile.console.nativeWidth to profile.console.nativeHeight)
         nativeBridge.nativeSetRenderConfig(
             profile.isAiEnabled,
-            profile.console.nativeWidth,
-            profile.console.nativeHeight,
+            nativeW,
+            nativeH,
             profile.scanlineIntensity,
             profile.lcdGridIntensity
         )

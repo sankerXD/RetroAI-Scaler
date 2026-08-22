@@ -29,6 +29,7 @@ set(SOURCE_FILES
     common/scroll_estimator.cpp
     capture/hw_buffer_reader.cpp
     capture/frame_cropper.cpp
+    capture/shim_buffer_pool.cpp
     ai/espcn_inference.cpp
     render/gl_renderer.cpp
     render/ui_panels.cpp

@@ -9,14 +9,13 @@
         Strings absent from this file fall back to values/ (English). That is
         why app_name and the pure-ASCII engine names are not repeated here.
     -->
-    <string name="app_subtitle">RA 模拟器实时 AI 超分外挂层</string>
+    <string name="app_subtitle">RA模拟的实时AI引擎</string>
 
     <string name="status_service_running">AI 增强引擎运行中</string>
     <string name="status_service_stopped">AI 增强引擎已停止</string>
-    <string name="btn_start_service">启动 AI 增强滤镜</string>
+    <string name="btn_start_service">启动 AI 增强引擎</string>
     <string name="btn_stop_service">停止外挂服务</string>
     <string name="hw_detecting">硬件检测中…</string>
-    <string name="usage_hint">使用指南：启动 AI 增强后，等待捕获完成，在天马 G 启动游戏</string>
 
     <string name="section_console">游玩机种</string>
     <string name="btn_change">更换</string>
@@ -61,6 +60,7 @@
     <string name="toast_restart_to_apply">重启 AI 增强后生效</string>
     <string name="toast_grant_overlay_first">请先授予悬浮窗权限</string>
     <string name="btn_cancel">取消</string>
+    <string name="btn_confirm">确认</string>
 
     <string name="menu_title">Retro AI 控制中心</string>
     <string name="menu_section_picture">画面</string>
@@ -99,6 +99,7 @@
     <string name="toast_config_written">%1$s\n重启 RA 后请重新【自动探测】</string>
     <string name="toast_detecting">正在探测游戏画面位置…</string>
     <string name="toast_detect_locked">已锁定画面: %1$d×%2$d @ (%3$d, %4$d)</string>
+    <string name="toast_detect_fullscreen">RetroArch 仍在全屏绘制，说明新的画面布局还没生效。请关闭 RetroArch 并重新启动游戏。</string>
     <string name="toast_detect_failed">没找到游戏画面。确认游戏正在显示、且不是全黑画面</string>
     <string name="toast_corner_restored">已改回按角落计算的取景窗</string>
 
@@ -114,6 +115,7 @@
     <string name="toast_backup_done">RetroArch 配置已备份\n%1$s</string>
     <string name="toast_no_core_dir">没找到 %1$s 的核心配置目录，请先在 RA 里跑一次该平台游戏</string>
     <string name="toast_configured_restart">已配置 %1$s，请重启 RetroArch</string>
+    <string name="toast_unknown_core">认不出「%1$s」是哪个机种，没有改动 RetroArch 的配置。请先从天马G启动一次游戏，再试录屏模式。</string>
     <string name="banner_capture_mode_changed">捕获方式已变更\n请关闭 RetroArch，重新载入游戏</string>
     <string name="toast_capture_mode_mismatch">捕获方式与预期不同，已重新配置\n请重启 RetroArch 后重新载入游戏</string>
     <string name="toast_capture_start_failed">录屏捕获启动失败，已停止 AI 增强</string>
@@ -122,6 +124,7 @@
     <string name="toast_rotate_capture_failed">旋转后录屏重建失败，已停止 AI 增强</string>
 
     <string name="console_ps1">PS1/街机</string>
+    <string name="console_dc">DC 世嘉</string>
 
     <string name="corner_top_left">左上</string>
     <string name="corner_top_right">右上</string>
@@ -158,16 +161,17 @@
     <string name="backup_done">已备份 %1$d 个配置文件 (%2$d KB)\n%3$s</string>
     <string name="backup_kept">\n保留 %1$d/%2$d 份</string>
     <string name="backup_pruned">，已清理 %1$d 份最旧的</string>
-    <string name="backup_none_available">没有任何备份可用</string>
-    <string name="backup_incomplete">备份 %1$s 不完整</string>
-    <string name="backup_restored">已从备份 %2$s 还原 %1$d 个文件</string>
+    <string name="backup_restored_files">已还原 %1$d 个 RetroArch 配置文件</string>
+    <string name="backup_restored_via_snapshot">\n其中 %1$d 个来自快照 %2$s</string>
+    <string name="backup_restored_via_strip">\n有 %1$d 个既没有记录、也没有可用快照，改为删掉我们写的那几个键</string>
     <string name="backup_restored_kept">\n（备份已保留，共 %1$d 份）</string>
-    <string name="backup_restore_missing">\n⚠ %1$d 个文件在该备份中找不到:\n</string>
+    <string name="backup_restore_failed">\n⚠ %1$d 个文件还原失败:\n</string>
     <string name="backup_note_header">RetroAI-Scaler 配置备份</string>
     <string name="backup_note_time">时间: %1$s</string>
     <string name="backup_note_reason">原因: %1$s</string>
     <string name="backup_note_source">来源: %1$s</string>
     <string name="backup_note_files">文件: %1$d 个 (%2$d KB)，跳过 %3$d 个大文件/BIOS</string>
+    <string name="backup_note_manual_restore">手动还原（不需要本 APP）：把本文件旁边的 config/ 整个拷回\n%1$s\n覆盖即可。RA 下次载入游戏时就会读到。</string>
     <string name="backup_note_main_config">注意: RetroArch 主配置 retroarch.cfg 位于\nAndroid/data/com.retroarch.aarch64/files/ 下，安卓 11 起\n第三方应用无法访问，因此不在此备份内。\n本工具也从不修改主配置，只写核心覆盖配置。</string>
 
     <string name="capture_no_frame">没有取到画面（游戏未在前台？）</string>
@@ -181,4 +185,39 @@
     <string name="capture_button_count">截取原生帧　已存 %1$d</string>
     <string name="capture_auto_stop">停止自动采集　%1$d 张\n%2$s</string>
     <string name="capture_auto_start">开始自动采集</string>
+
+    <string name="toast_shim_hw_core">该平台无法直接渲染。请关闭 RetroArch，回到本 APP 启动录屏模式。</string>
+    <string name="toast_shim_hw_core_unsupported">该平台无法直接渲染，AI 增强已停止。</string>
+    <string name="toast_shim_no_frames">没有收到模拟器传来的画面。请确认已在 RetroArch 里装好配套核心，并且是用它启动的游戏。</string>
+    <string name="shim_setup_title">初始化设置</string>
+    <string name="shim_setup_guide">1 · 设置核心</string>
+    <string name="shim_apply">2 · 覆盖天马G配置</string>
+    <string name="shim_restore">撤销</string>
+    <string name="toast_nothing_to_apply">没有需要覆盖的——已安装的核心，配置里都已经指向它们了。</string>
+    <string name="capture_wont_fit_title">这块屏幕放不下</string>
+    <string name="capture_wont_fit_body">%1$s 的原生画面是 %2$d×%3$d。\n\n录屏会把本 APP 自己画的东西也拍进去，所以 RA 必须缩到屏幕一角按原生尺寸画着，增强画面只能用剩下的空间。%4$d×%5$d 的屏幕上，剩下的地方放不下一张比原图更大的画面。\n\n这条路线对这个平台在这块屏幕上帮不上忙——是屏幕不够，不是没配好。</string>
+    <string name="special_mode_title">特殊模式</string>
+    <string name="special_mode_desc">这个平台是 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效。</string>
+    <string name="special_mode_desc_console">%1$s 是 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效。</string>
+    <string name="shim_use_capture">录屏模式</string>
+    <string name="shim_status">%1$d / %2$d 个机种已设置</string>
+    <string name="shim_status_none">还没设置——点【怎么设置】</string>
+    <string name="toast_launch_restored">已还原 %1$d 条启动项。请在前端里重新加载一次游戏库。</string>
+    <string name="shim_guide_title">初始化设置</string>
+    <string name="shim_guide_core_title">核心设置</string>
+    <string name="shim_guide_start">开始设置</string>
+    <string name="shim_guide_retroarch">RA 设置：\n\n1. 菜单 → 加载核心 → 安装或还原核心，加载\n%1$s\n\n2. 菜单 → 加载核心，选中「Nintendo - Game Boy Advance (VBA-M) (RetroAI)」完成初始化。\n注意认准 RetroAI，选错核心将无法初始化。</string>
+    <string name="shim_guide_launcher">天马G 设置：\n\n回到本 APP，点击【2 · 覆盖天马G配置】。</string>
+    <string name="reload_notice_title">需要重新加载游戏库</string>
+    <string name="reload_notice_body">回到天马G：设置 → 重新加载。\n\n如果你用的是原版天马G（非大光圈修改版），请无视。</string>
+    <string name="capture_needed_title">该平台需要录屏模式</string>
+    <string name="capture_needed_body">它是用 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效——接下来系统会请求录屏授权。</string>
+    <string name="capture_ready_title">还差一步</string>
+    <string name="capture_ready_body">确保你已经关闭 RA。请再次从天马G启动游戏。</string>
+    <string name="shim_guide_ok">知道了</string>
+    <string name="shim_guide_body_restore">所有启动项都会指回真核心，本 APP 写过的 RetroArch 配置也会一并撤掉。</string>
+    <string name="shim_link_stop">断开连接</string>
+    <string name="shim_link_dump">落盘下一帧</string>
+    <string name="shim_link_idle">未运行。</string>
+    <string name="shim_link_notification">正在等待模拟器</string>
 </resources>
