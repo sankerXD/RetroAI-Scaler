@@ -17,7 +17,7 @@
     <!-- Main screen: status and the big button -->
     <string name="status_service_running">AI enhancement running</string>
     <string name="status_service_stopped">AI enhancement stopped</string>
-    <string name="btn_start_service">Start AI enhancement</string>
+    <string name="btn_start_service">Start the AI engine</string>
     <string name="btn_stop_service">Stop the service</string>
     <string name="hw_detecting">Detecting hardware…</string>
 
@@ -224,7 +224,7 @@
       Delete along with ShimProbeService.kt once the gate is answered. The
       transcript itself is deliberately untranslated: it is a diagnostic log.
     -->
-    <string name="toast_shim_hw_core">This emulator core draws on the GPU, so taking the picture directly from it is not possible. Use “Start AI enhancement” instead — that route works with any core.</string>
+    <string name="toast_shim_hw_core">This emulator core draws on the GPU, so taking the picture directly from it is not possible. Use “Use screen recording instead” — that route works with any core.</string>
     <string name="toast_shim_no_frames">No picture arrived from the emulator. Check that the companion core is installed in RetroArch and that the game was started with it.</string>
     <string name="shim_setup_title">First-time setup</string>
     <string name="shim_setup_guide">1 · Install the core</string>

@@ -242,8 +242,10 @@ class FloatingBallManager(
             profile = ProfilePreference.load(context)
         }
 
-        val scale = scaleForOutput(width, height)
-        if (scale != null) profile.aiScale = scale
+        // The scale is NOT set from the geometry. It follows the console, which
+        // is where the player's own choice is stored - so switching console
+        // brings back what they picked for it rather than a number derived
+        // behind their back and overwritten every time they change game.
         Log.i(TAG, "frames are ${width}x$height from ${coreFile ?: "?"} -> " +
             (matched?.name ?: "unrecognised, keeping ${profile.console.name}") +
             ", output ${outputMultiple(width, height)}x, AI ${profile.aiScale.label}")
@@ -255,30 +257,6 @@ class FloatingBallManager(
     private fun outputMultiple(nativeWidth: Int, nativeHeight: Int): Int =
         if (nativeWidth <= 0 || nativeHeight <= 0) 1
         else minOf(screenWidth / nativeWidth, screenHeight / nativeHeight).coerceAtLeast(1)
-
-    /**
-     * Picks the AI scale from the geometry instead of asking anyone to guess.
-     *
-     * AGENT.md §15.6 asked for exactly this and could not have it: with screen
-     * capture the scale was a per-console preference, saved and reloaded, and
-     * nothing measured the multiple the picture was actually drawn at. So a
-     * console switch kept the previous console's scale, the network
-     * reconstructed onto a grid of uNativeRes x aiScale that the output was not
-     * drawn on, and §3's snapping resampled the detail it had just rebuilt.
-     * Measured: Game Boy Color at 6x followed by an NES at 248x224, which is
-     * drawn at 4x - the picture came out soft and looked like it had inherited
-     * the previous console.
-     *
-     * Rounding up rather than down when the multiple is not one we have a model
-     * for: too large means detail is computed and then discarded, too small
-     * means the network's output is upscaled again afterwards. Only the second
-     * is visible, and softness is the one thing this project fights hardest.
-     */
-    private fun scaleForOutput(width: Int, height: Int): AiScale? {
-        val k = outputMultiple(width, height)
-        val usable = AiScale.entries.filter { it.factor >= 2 }.sortedBy { it.factor }
-        return usable.firstOrNull { it.factor >= k } ?: usable.lastOrNull()
-    }
 
     fun pushAllSettings() {
         // The engine owns its effects, including across a restart: a profile
@@ -615,27 +593,24 @@ class FloatingBallManager(
      * because it is indistinguishable from one.
      */
     private fun syncScaleChipsEnabled(root: View) {
+        // Every scale stays on offer, including ones above the multiple the
+        // picture is drawn at.
+        //
+        // Hiding them was defensible on paper - reconstructing detail that is
+        // then minified away, onto a grid the output is not drawn on - and
+        // wrong in the eye. On a small panel a 6x reconstruction shown at 5x
+        // still looks sharper than a 5x one, and the non-integer step between
+        // them is not visible. The rule that actually matters is that the
+        // OUTPUT is a whole multiple of the native resolution; what the network
+        // reconstructs on the way there is a quality-for-cost trade, and the
+        // person looking at the screen is better placed to make it.
         val usable = profile.engine.usesNetwork
-        // Above the multiple the picture is actually drawn at, a scale is not a
-        // quality setting - it reconstructs detail that is then thrown away on
-        // the way down to the screen, and onto a grid the output is not drawn
-        // on. Nothing there to choose, so it is not offered.
-        val ceiling = nativeSizeOverride?.let { (w, h) -> outputMultiple(w, h) } ?: Int.MAX_VALUE
         val group = root.findViewById<ChipGroup>(R.id.chipGroupScale)
         for (i in 0 until group.childCount) {
-            val chip = group.getChildAt(i)
-            val factor = when (chip.id) {
-                R.id.chipScale1x -> 1
-                R.id.chipScale2x -> 2
-                R.id.chipScale3x -> 3
-                R.id.chipScale4x -> 4
-                R.id.chipScale5x -> 5
-                R.id.chipScale6x -> 6
-                else -> 1
+            group.getChildAt(i).apply {
+                isEnabled = usable
+                alpha = if (usable) 1.0f else 0.4f
             }
-            chip.visibility = if (factor <= ceiling) View.VISIBLE else View.GONE
-            chip.isEnabled = usable
-            chip.alpha = if (usable) 1.0f else 0.4f
         }
     }
 

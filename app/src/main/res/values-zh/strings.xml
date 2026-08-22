@@ -13,7 +13,7 @@
 
     <string name="status_service_running">AI 增强引擎运行中</string>
     <string name="status_service_stopped">AI 增强引擎已停止</string>
-    <string name="btn_start_service">启动 AI 增强滤镜</string>
+    <string name="btn_start_service">启动 AI 增强引擎</string>
     <string name="btn_stop_service">停止外挂服务</string>
     <string name="hw_detecting">硬件检测中…</string>
 
@@ -182,7 +182,7 @@
     <string name="capture_auto_stop">停止自动采集　%1$d 张\n%2$s</string>
     <string name="capture_auto_start">开始自动采集</string>
 
-    <string name="toast_shim_hw_core">这个模拟器核心是用 GPU 画的，没法从它内部直接取画面。请改用【启动 AI 增强滤镜】——那条路任何核心都能用。</string>
+    <string name="toast_shim_hw_core">这个模拟器核心是用 GPU 画的，没法从它内部直接取画面。请改用【改用录屏模式】——那条路任何核心都能用。</string>
     <string name="toast_shim_no_frames">没有收到模拟器传来的画面。请确认已在 RetroArch 里装好配套核心，并且是用它启动的游戏。</string>
     <string name="shim_setup_title">初始化设置</string>
     <string name="shim_setup_guide">1 · 设置核心</string>

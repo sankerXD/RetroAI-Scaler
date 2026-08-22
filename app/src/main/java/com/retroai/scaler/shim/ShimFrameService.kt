@@ -214,18 +214,34 @@ class ShimFrameService : Service() {
                 if (!stopping) say("accept failed - ${t.javaClass.simpleName}: ${t.message}")
                 break
             }
-            try {
-                handleClient(client)
-            } catch (t: Throwable) {
-                say("client ended - ${t.javaClass.simpleName}: ${t.message}")
-            } finally {
-                connected = false
-                this.client = null
+            /*
+             * One thread per connection, because more than one shim can be
+             * connected at once.
+             *
+             * The shim is linked NODELETE, so a RetroArch process that switches
+             * core keeps the previous shim mapped with its thread and its
+             * socket still alive. Handling connections one at a time meant the
+             * app sat reading the OLD core's connection - which had nothing
+             * left to send - while the core actually running could not get a
+             * word in. The visible symptom was the console being identified
+             * from the previous game's core: an NES read as a Game Boy Advance.
+             */
+            Thread({
                 try {
-                    client.close()
-                } catch (ignored: Throwable) {
+                    handleClient(client)
+                } catch (t: Throwable) {
+                    say("client ended - ${t.javaClass.simpleName}: ${t.message}")
+                } finally {
+                    if (this.client === client) {
+                        connected = false
+                        this.client = null
+                    }
+                    try {
+                        client.close()
+                    } catch (ignored: Throwable) {
+                    }
                 }
-            }
+            }, "ShimLink-client").apply { isDaemon = true }.start()
         }
         say("listener exited")
     }
@@ -235,14 +251,14 @@ class ShimFrameService : Service() {
      * logged and ignored on purpose, so an older app and a newer shim keep
      * working rather than failing at each other.
      */
-    private fun handleNotice(text: String) {
+    private fun handleNotice(text: String, onCore: (String?) -> Unit) {
         say("notice from shim: ${text.replace("\n", " ")}")
         for (line in text.lineSequence()) {
             val key = line.substringBefore('=')
             val value = line.substringAfter('=', "")
             when (key) {
                 "hw_render" -> hardwareRenderedCore = value == "1"
-                "core" -> coreFile = value.takeIf { it.isNotEmpty() && it != "unknown" }
+                "core" -> onCore(value.takeIf { it.isNotEmpty() && it != "unknown" })
                 // Unknown keys are ignored on purpose, so an older app and a
                 // newer shim keep working rather than failing at each other.
             }
@@ -305,6 +321,10 @@ class ShimFrameService : Service() {
         }
 
         connected = true
+        // Per connection, and promoted to the shared field only by a frame
+        // actually arriving on it. Whichever shim is really running is the one
+        // delivering pictures, so that is the one whose core name counts.
+        var thisCore: String? = null
         say("shim connected")
 
         /*
@@ -350,7 +370,7 @@ class ShimFrameService : Service() {
                     return
                 }
                 val text = ByteArray(n).also { if (n > 0) input.readFully(it) }
-                handleNotice(String(text))
+                handleNotice(String(text)) { thisCore = it }
                 continue
             }
             if (h.getInt(0) != FRAME_MAGIC) {
@@ -365,6 +385,7 @@ class ShimFrameService : Service() {
             if (payload.size < bytes) payload = ByteArray(bytes)
             input.readFully(payload, 0, bytes)
 
+            coreFile = thisCore
             lastWidth = h.getShort(28).toInt() and 0xFFFF
             lastHeight = h.getShort(30).toInt() and 0xFFFF
             lastPitch = h.getInt(24)
