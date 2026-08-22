@@ -104,6 +104,12 @@ class ShimFrameService : Service() {
          */
         @Volatile var hardwareRenderedCore = false
 
+        /**
+         * The real core behind the shim, e.g. "fceumm_libretro_android.so".
+         * Identifies the console where the frame size cannot.
+         */
+        @Volatile var coreFile: String? = null
+
         /** Set by the UI; the next frame to arrive is written out as a PNG. */
         val dumpRequested = AtomicBoolean(false)
 
@@ -137,6 +143,7 @@ class ShimFrameService : Service() {
         averageFps = 0.0
         connected = false
         hardwareRenderedCore = false
+        coreFile = null
         stopping = false
         isRunning = true
 
@@ -229,10 +236,16 @@ class ShimFrameService : Service() {
      * working rather than failing at each other.
      */
     private fun handleNotice(text: String) {
-        say("notice from shim: $text")
-        when {
-            text == "hw_render=1" -> hardwareRenderedCore = true
-            text == "hw_render=0" -> hardwareRenderedCore = false
+        say("notice from shim: ${text.replace("\n", " ")}")
+        for (line in text.lineSequence()) {
+            val key = line.substringBefore('=')
+            val value = line.substringAfter('=', "")
+            when (key) {
+                "hw_render" -> hardwareRenderedCore = value == "1"
+                "core" -> coreFile = value.takeIf { it.isNotEmpty() && it != "unknown" }
+                // Unknown keys are ignored on purpose, so an older app and a
+                // newer shim keep working rather than failing at each other.
+            }
         }
     }
 

@@ -11,6 +11,30 @@ import com.retroai.scaler.R
  * outputs - everything downstream (capture window size, integer output factor,
  * the AI network's input) is derived from these numbers.
  */
+/**
+ * Which console a core emulates.
+ *
+ * Resolution alone cannot answer this, and the failure is not exotic: fceumm
+ * crops NES overscan by default and emits 248x224, which is nearer to SFC's
+ * 256x224 than to the NES's own 256x240 - so matching on size picked the wrong
+ * console for the commonest NES core there is. A core's name is not ambiguous,
+ * and the shim knows it, so it says so.
+ *
+ * Resolution still goes first, because it settles what a core name cannot:
+ * mGBA plays both Game Boy and Game Boy Advance, and only the frame size tells
+ * those apart.
+ */
+fun consoleForCore(coreFile: String): ConsoleType? =
+    when (coreFile.substringBefore("_libretro").removeSuffix("_shim")) {
+        "vbam", "gpsp", "mgba", "vba_next" -> ConsoleType.GBA
+        "gambatte", "sameboy", "gearboy" -> ConsoleType.GBC
+        "fceumm", "nestopia", "quicknes", "mesen", "fceux" -> ConsoleType.FC
+        "snes9x", "snes9x2010", "bsnes", "bsnes_mercury_balanced" -> ConsoleType.SFC
+        "genesis_plus_gx", "picodrive" -> ConsoleType.MD
+        "swanstation", "pcsx_rearmed", "mednafen_psx", "duckstation" -> ConsoleType.PS1
+        else -> null
+    }
+
 enum class ConsoleType(
     @StringRes val labelRes: Int,
     val nativeWidth: Int,
@@ -197,6 +221,15 @@ enum class AiScale(val factor: Int, val label: String) {
     X2(2, "2x"),
     X3(3, "3x"),
     X4(4, "4x"),
+
+    /**
+     * 1280x960 handhelds drawing a Game Boy Advance: 240x160 fits five times
+     * across and six down, so the picture is drawn at 5x - and there was no
+     * model for it, so the nearest one reconstructed onto a grid the picture
+     * was not drawn on. Now that the scale is picked from the measured
+     * geometry, every multiple that geometry can produce needs a model.
+     */
+    X5(5, "5x"),
 
     /**
      * Matches the output geometry on a 1080p handheld running GBA: the picture

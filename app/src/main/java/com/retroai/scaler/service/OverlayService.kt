@@ -986,7 +986,9 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                 // profile, the renderer config, the geometry - belongs to the
                 // main thread.
                 mainHandler.post {
-                    if (floatingBallManager?.adoptNativeSize(w, h) == true) pushGeometry()
+                    val adopted = floatingBallManager
+                        ?.adoptNativeSize(w, h, ShimFrameService.coreFile)
+                    if (adopted == true) pushGeometry()
                 }
             }
             source.start()

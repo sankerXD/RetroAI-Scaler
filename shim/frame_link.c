@@ -79,6 +79,7 @@ static int           g_sock = -1;
 static bool          g_warned_oversize;
 static atomic_bool   g_hw_render;
 static atomic_bool   g_notice_sent;
+static char          g_core_file[128];
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -202,8 +203,10 @@ static void *sender_main(void *unused)
         }
 
         if (!atomic_load(&g_notice_sent)) {
-            const char *line = atomic_load(&g_hw_render) ? "hw_render=1"
-                                                         : "hw_render=0";
+            char line[256];
+            snprintf(line, sizeof(line), "hw_render=%d\ncore=%s",
+                     atomic_load(&g_hw_render) ? 1 : 0,
+                     g_core_file[0] ? g_core_file : "unknown");
             struct wire_header n;
             memset(&n, 0, sizeof(n));
             n.magic         = NOTICE_MAGIC;
@@ -309,6 +312,11 @@ void frame_link_set_format(unsigned pixel_format)
 void frame_link_set_rotation(unsigned rotation)
 {
     atomic_store(&g_rotation, rotation);
+}
+
+void frame_link_set_core(const char *core_file)
+{
+    if (core_file) snprintf(g_core_file, sizeof(g_core_file), "%s", core_file);
 }
 
 void frame_link_set_hw_render(bool hardware_rendered)

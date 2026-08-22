@@ -110,6 +110,7 @@ class FloatingBallManager(
      * from the other direction.
      */
     private var nativeSizeOverride: Pair<Int, Int>? = null
+    private var lastCoreFile: String? = null
         private set
 
     // Views
@@ -223,14 +224,19 @@ class FloatingBallManager(
      * profile is current. That is a strictly better answer than the capture
      * path could give, where an unlisted console could not be played at all.
      */
-    fun adoptNativeSize(width: Int, height: Int): Boolean {
+    fun adoptNativeSize(width: Int, height: Int, coreFile: String?): Boolean {
         if (width <= 0 || height <= 0) return false
-        if (nativeSizeOverride == (width to height)) return false
+        if (nativeSizeOverride == (width to height) && coreFile == lastCoreFile) return false
         nativeSizeOverride = width to height
+        lastCoreFile = coreFile
 
+        // Resolution first, because it settles what a core name cannot - mGBA
+        // plays both Game Boy and Game Boy Advance. Core name second, because
+        // it settles what resolution cannot: fceumm crops NES overscan to
+        // 248x224, which is nearer SFC's 256x224 than FC's own 256x240.
         val matched = ConsoleType.entries.firstOrNull {
             it.nativeWidth == width && it.nativeHeight == height
-        }
+        } ?: coreFile?.let { consoleForCore(it) }
         if (matched != null && matched != profile.console) {
             ProfilePreference.setConsole(context, matched)
             profile = ProfilePreference.load(context)
@@ -238,8 +244,8 @@ class FloatingBallManager(
 
         val scale = scaleForOutput(width, height)
         if (scale != null) profile.aiScale = scale
-        Log.i(TAG, "frames are ${width}x$height -> " +
-            (matched?.name ?: "no console match, keeping ${profile.console.name}") +
+        Log.i(TAG, "frames are ${width}x$height from ${coreFile ?: "?"} -> " +
+            (matched?.name ?: "unrecognised, keeping ${profile.console.name}") +
             ", output ${outputMultiple(width, height)}x, AI ${profile.aiScale.label}")
         pushAllSettings()
         return true
@@ -490,6 +496,7 @@ class FloatingBallManager(
                     R.id.chipScale2x -> AiScale.X2
                     R.id.chipScale3x -> AiScale.X3
                     R.id.chipScale4x -> AiScale.X4
+                    R.id.chipScale5x -> AiScale.X5
                     R.id.chipScale6x -> AiScale.X6
                     else -> profile.aiScale
                 }
@@ -609,12 +616,26 @@ class FloatingBallManager(
      */
     private fun syncScaleChipsEnabled(root: View) {
         val usable = profile.engine.usesNetwork
+        // Above the multiple the picture is actually drawn at, a scale is not a
+        // quality setting - it reconstructs detail that is then thrown away on
+        // the way down to the screen, and onto a grid the output is not drawn
+        // on. Nothing there to choose, so it is not offered.
+        val ceiling = nativeSizeOverride?.let { (w, h) -> outputMultiple(w, h) } ?: Int.MAX_VALUE
         val group = root.findViewById<ChipGroup>(R.id.chipGroupScale)
         for (i in 0 until group.childCount) {
-            group.getChildAt(i).apply {
-                isEnabled = usable
-                alpha = if (usable) 1.0f else 0.4f
+            val chip = group.getChildAt(i)
+            val factor = when (chip.id) {
+                R.id.chipScale1x -> 1
+                R.id.chipScale2x -> 2
+                R.id.chipScale3x -> 3
+                R.id.chipScale4x -> 4
+                R.id.chipScale5x -> 5
+                R.id.chipScale6x -> 6
+                else -> 1
             }
+            chip.visibility = if (factor <= ceiling) View.VISIBLE else View.GONE
+            chip.isEnabled = usable
+            chip.alpha = if (usable) 1.0f else 0.4f
         }
     }
 
@@ -805,6 +826,7 @@ class FloatingBallManager(
                 AiScale.X2 -> R.id.chipScale2x
                 AiScale.X3 -> R.id.chipScale3x
                 AiScale.X4 -> R.id.chipScale4x
+                AiScale.X5 -> R.id.chipScale5x
                 AiScale.X6 -> R.id.chipScale6x
             }
         )
@@ -822,6 +844,7 @@ class FloatingBallManager(
                 AiScale.X2 -> R.id.chipScale2x
                 AiScale.X3 -> R.id.chipScale3x
                 AiScale.X4 -> R.id.chipScale4x
+                AiScale.X5 -> R.id.chipScale5x
                 AiScale.X6 -> R.id.chipScale6x
             }
         )

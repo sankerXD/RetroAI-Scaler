@@ -58,6 +58,16 @@ void frame_link_set_rotation(unsigned rotation);
  */
 void frame_link_set_hw_render(bool hardware_rendered);
 
+/*
+ * Tell the app which core is behind us.
+ *
+ * Resolution cannot identify a console on its own: fceumm crops NES overscan by
+ * default and emits 248x224, nearer to SFC's 256x224 than to the NES's own
+ * 256x240, so matching on size picks the wrong console for the commonest NES
+ * core there is. The core's filename is not ambiguous and we are holding it.
+ */
+void frame_link_set_core(const char *core_file);
+
 /* Called from retro_run. `data` must be real pixels: the caller has already
  * rejected NULL and RETRO_HW_FRAME_BUFFER_VALID. */
 void frame_link_publish(const void *data, unsigned width, unsigned height,

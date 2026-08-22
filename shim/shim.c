@@ -785,6 +785,7 @@ static void load_once(void)
     }
 
     g_ready = true;
+    frame_link_set_core(g_core_base);
     LOGI("real core loaded and all 25 entry points resolved");
 
     /* After the core is known to be good, so a failure here can never be
