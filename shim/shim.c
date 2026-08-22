@@ -51,6 +51,12 @@
 #define SHIM_MARKER "_shim"
 #define CONTROL_FILE "/storage/emulated/0/RetroAIScaler/shim/probe.txt"
 
+/* One core filename per line, written by the app from what it found in the
+ * frontend's launch lines. See replicate_for_listed_cores. */
+#define CORES_FILE "/storage/emulated/0/RetroAIScaler/shim/cores.txt"
+#define CORE_SUFFIX "_libretro_android.so"
+#define SHIM_SUFFIX "_shim_libretro_android.so"
+
 /* Where RetroArch keeps retroarch.cfg on Android, relative to external
  * storage. Only used to find libretro_info_path; see install_info_file. */
 #define RA_CFG_FMT "/storage/emulated/0/Android/data/%s/files/retroarch.cfg"
@@ -385,6 +391,127 @@ static void invalidate_stale_info_cache(const char *info_dir, const char *our_in
     closedir(d);
 }
 
+/*
+ * Copy ourselves once per core the device actually uses.
+ *
+ * RetroArch's core directory takes one file per trip through "Install or
+ * Restore a Core", and the test device references 22 distinct cores across 59
+ * launch lines. Twenty-two trips through a file browser is not a product, and
+ * it is not a thing anyone would finish.
+ *
+ * The shim is the one piece of this that CAN do it: it runs as RetroArch, so
+ * RetroArch's core directory is writable to it - the same capability that lets
+ * it install its own .info. Install one by hand, and it covers the rest on the
+ * next launch.
+ *
+ * This is not the "rename takeover" §10 rejected, and the difference is
+ * structural rather than a matter of care: every name written here ends in
+ * _shim_libretro_android.so, so it CANNOT collide with a real core's filename.
+ * There is no path by which this overwrites a core, and it refuses to overwrite
+ * any existing file anyway.
+ *
+ * A shim is only created where the real core is actually present. A launch line
+ * pointing at a shim whose real core is missing is the one way this whole route
+ * produces a hard error for the player, and it is cheaper to not create the
+ * shim than to detect that later.
+ */
+static bool copy_file(const char *src, const char *dst)
+{
+    FILE *in = fopen(src, "rb");
+    if (!in) return false;
+
+    /* Write to a temporary name and rename into place. RetroArch could try to
+     * load this the moment it appears, and a half-written .so is a crash with
+     * no explanation attached. */
+    char tmp[PATH_MAX];
+    if ((size_t)snprintf(tmp, sizeof(tmp), "%s.tmp", dst) >= sizeof(tmp)) {
+        fclose(in);
+        return false;
+    }
+    FILE *out = fopen(tmp, "wb");
+    if (!out) {
+        fclose(in);
+        return false;
+    }
+
+    char   buf[8192];
+    size_t n;
+    bool   ok = true;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) {
+            ok = false;
+            break;
+        }
+    }
+    fclose(in);
+    if (fclose(out) != 0) ok = false;
+
+    if (!ok || rename(tmp, dst) != 0) {
+        remove(tmp);
+        return false;
+    }
+    chmod(dst, 0700);
+    return true;
+}
+
+static void replicate_for_listed_cores(const char *self_dir, const char *self_base)
+{
+    FILE *f = fopen(CORES_FILE, "r");
+    if (!f) return;   /* the app has not asked for anything; nothing to do */
+
+    char self_path[PATH_MAX];
+    if ((size_t)snprintf(self_path, sizeof(self_path), "%s%s", self_dir, self_base)
+            >= sizeof(self_path)) {
+        fclose(f);
+        return;
+    }
+
+    char line[256];
+    int  made = 0, skipped = 0;
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        size_t len = strlen(line);
+        if (len == 0 || line[0] == '#') continue;
+
+        /* Only ever act on names shaped like a core, so a stray line in that
+         * file cannot make us write something arbitrary. */
+        size_t suffix_len = strlen(CORE_SUFFIX);
+        if (len <= suffix_len ||
+            strcmp(line + len - suffix_len, CORE_SUFFIX) != 0 ||
+            strstr(line, SHIM_MARKER) != NULL ||
+            strchr(line, '/') != NULL) {
+            skipped++;
+            continue;
+        }
+
+        char real[PATH_MAX], target[PATH_MAX];
+        size_t stem = len - suffix_len;
+        if ((size_t)snprintf(real, sizeof(real), "%s%s", self_dir, line) >= sizeof(real) ||
+            (size_t)snprintf(target, sizeof(target), "%s%.*s%s",
+                             self_dir, (int)stem, line, SHIM_SUFFIX) >= sizeof(target)) {
+            skipped++;
+            continue;
+        }
+
+        struct stat st;
+        if (stat(real, &st) != 0) {
+            LOGI("  no %s on this device, not making a shim for it", line);
+            skipped++;
+            continue;
+        }
+        if (stat(target, &st) == 0) continue;   /* already there */
+
+        if (copy_file(self_path, target)) {
+            LOGI("  installed %s", target);
+            made++;
+        } else {
+            LOGE("  could not install %s", target);
+        }
+    }
+    fclose(f);
+    if (made) LOGI("replicated into %d core name(s), %d skipped", made, skipped);
+}
+
 static void install_info_file(const char *self_dir, const char *self_base,
                               const char *core_base)
 {
@@ -558,6 +685,11 @@ static void load_once(void)
      * costs nothing. Until it connects, frame_link_publish returns on one
      * atomic load and the shim stays the pure passthrough gate 2 measured. */
     frame_link_start();
+
+    /* Last, and only once the core is known good: a failure here must never be
+     * confused with a failure to load, and there is nothing to replicate for if
+     * this shim itself did not work. */
+    replicate_for_listed_cores(g_self_dir, g_self_base);
 }
 
 /*
