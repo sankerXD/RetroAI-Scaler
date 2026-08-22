@@ -110,6 +110,9 @@ class ShimFrameService : Service() {
          */
         @Volatile var coreFile: String? = null
 
+        /** When a frame last arrived, from any connection. */
+        @Volatile private var lastFrameOwnerAtMs = 0L
+
         /** Set by the UI; the next frame to arrive is written out as a PNG. */
         val dumpRequested = AtomicBoolean(false)
 
@@ -258,7 +261,27 @@ class ShimFrameService : Service() {
             val value = line.substringAfter('=', "")
             when (key) {
                 "hw_render" -> hardwareRenderedCore = value == "1"
-                "core" -> onCore(value.takeIf { it.isNotEmpty() && it != "unknown" })
+                "core" -> {
+                    val name = value.takeIf { it.isNotEmpty() && it != "unknown" }
+                    onCore(name)
+                    /*
+                     * A core that renders on the GPU never sends a frame, so
+                     * waiting for one to claim the name means the one case that
+                     * needs identifying is the one case that never gets
+                     * identified. Measured: a PlayStation fell back to screen
+                     * capture and was laid out as the previous console.
+                     *
+                     * So a notice claims it too, but only while nothing is
+                     * delivering pictures - otherwise a stale connection still
+                     * re-announcing itself every five seconds would keep taking
+                     * the name away from the core actually running.
+                     */
+                    if (name != null &&
+                        SystemClock.elapsedRealtime() - lastFrameOwnerAtMs > 3000
+                    ) {
+                        coreFile = name
+                    }
+                }
                 // Unknown keys are ignored on purpose, so an older app and a
                 // newer shim keep working rather than failing at each other.
             }
@@ -385,10 +408,12 @@ class ShimFrameService : Service() {
             if (payload.size < bytes) payload = ByteArray(bytes)
             input.readFully(payload, 0, bytes)
 
-            // Only ever set, never cleared by a frame: a picture arriving
-            // before this connection's notice must not wipe out a name that is
-            // already correct.
+            // Delivering pictures is what makes a connection the live one, so
+            // it takes ownership of the core name here. Never cleared by a
+            // frame: a picture arriving before this connection's notice must
+            // not wipe out a name that is already correct.
             thisCore?.let { coreFile = it }
+            lastFrameOwnerAtMs = SystemClock.elapsedRealtime()
             lastWidth = h.getShort(28).toInt() and 0xFFFF
             lastHeight = h.getShort(30).toInt() and 0xFFFF
             lastPitch = h.getInt(24)

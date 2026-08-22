@@ -816,6 +816,19 @@ class OverlayService : Service(), SurfaceHolder.Callback {
                  * picture instead of in a corner.
                  */
                 floatingBallManager?.clearDetectedWindow()
+                /*
+                 * And start painting nothing.
+                 *
+                 * Screen capture mirrors the whole screen, and at this instant
+                 * the screen is our own settings page - the consent dialog just
+                 * closed on top of it. Carrying the previous session's "we are
+                 * rendering" state across meant the first captured frames were
+                 * of this app, blown up over itself. The foreground poll turns
+                 * it back on when the emulator returns, which is exactly when
+                 * the player restarts the game as instructed.
+                 */
+                isRenderingActive = false
+                applyRenderingState()
                 val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = mpManager.getMediaProjection(resultCode, data)
                 startCapturePipeline()
