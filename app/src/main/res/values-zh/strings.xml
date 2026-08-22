@@ -182,14 +182,14 @@
     <string name="capture_auto_stop">停止自动采集　%1$d 张\n%2$s</string>
     <string name="capture_auto_start">开始自动采集</string>
 
-    <string name="toast_shim_hw_core">这个模拟器核心是用 GPU 画的，没法从它内部直接取画面。请改用【改用录屏模式】——那条路任何核心都能用。</string>
+    <string name="toast_shim_hw_core">该平台无法直接渲染，请回 APP 启动录屏模式。</string>
     <string name="toast_shim_no_frames">没有收到模拟器传来的画面。请确认已在 RetroArch 里装好配套核心，并且是用它启动的游戏。</string>
     <string name="shim_setup_title">初始化设置</string>
     <string name="shim_setup_guide">1 · 设置核心</string>
     <string name="shim_apply">2 · 覆盖天马G配置</string>
     <string name="shim_restore">撤销</string>
     <string name="toast_nothing_to_apply">没有需要覆盖的——已安装的核心，配置里都已经指向它们了。</string>
-    <string name="shim_use_capture">改用录屏模式</string>
+    <string name="shim_use_capture">录屏模式</string>
     <string name="shim_status">%1$d / %2$d 个机种已设置</string>
     <string name="shim_status_none">还没设置——点【怎么设置】</string>
     <string name="toast_launch_restored">已还原 %1$d 条启动项。请在前端里重新加载一次游戏库。</string>

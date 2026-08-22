@@ -224,14 +224,14 @@
       Delete along with ShimProbeService.kt once the gate is answered. The
       transcript itself is deliberately untranslated: it is a diagnostic log.
     -->
-    <string name="toast_shim_hw_core">This emulator core draws on the GPU, so taking the picture directly from it is not possible. Use “Use screen recording instead” — that route works with any core.</string>
+    <string name="toast_shim_hw_core">This console cannot be enhanced directly. Go back to the app and start screen recording mode.</string>
     <string name="toast_shim_no_frames">No picture arrived from the emulator. Check that the companion core is installed in RetroArch and that the game was started with it.</string>
     <string name="shim_setup_title">First-time setup</string>
     <string name="shim_setup_guide">1 · Install the core</string>
     <string name="shim_apply">2 · Update the launcher</string>
     <string name="shim_restore">Undo</string>
     <string name="toast_nothing_to_apply">Nothing to update — the launcher already points at every core that is installed.</string>
-    <string name="shim_use_capture">Use screen recording instead</string>
+    <string name="shim_use_capture">Screen recording</string>
     <string name="shim_status">%1$d of %2$d consoles are set up</string>
     <string name="shim_status_none">Not set up yet — press “How to set it up”</string>
     <string name="toast_launch_restored">Put %1$d launch entries back. Reload the library in your frontend.</string>

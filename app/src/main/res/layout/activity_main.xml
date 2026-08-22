@@ -144,14 +144,15 @@
                          answer; see updateShimProbeUi. -->
                     <Button
                         android:id="@+id/btnShimCapture"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
                         android:layout_marginStart="8dp"
                         android:text="@string/shim_use_capture"
-                        android:textColor="@color/primary"
+                        android:textColor="@color/accent_orange"
                         android:textSize="12sp"
-                        android:visibility="gone" />
+                        android:visibility="gone"
+                        app:strokeColor="@color/accent_orange" />
                 </LinearLayout>
 
                 <TextView

@@ -24,6 +24,7 @@ import com.retroai.scaler.detector.RetroArchConfigManager
 import com.retroai.scaler.detector.TargetAppPreference
 import com.retroai.scaler.ui.AppLanguage
 import com.retroai.scaler.ui.ConsoleType
+import com.retroai.scaler.ui.consoleForCore
 import com.retroai.scaler.ui.LocaleHelper
 import com.retroai.scaler.ui.ProfilePreference
 import com.retroai.scaler.service.OverlayService
@@ -55,10 +56,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnShimStart: Button
 
     private lateinit var btnShimCapture: Button
+    private lateinit var cardConsole: View
 
     /** Filled in by syncLaunchFiles, read by the status line. */
     @Volatile private var shimCoreCount = 0
     @Volatile private var shimConvertedCount = 0
+    private var lastPreselectedCore: String? = null
     private lateinit var tvShimProbe: TextView
 
     private val foregroundMonitor by lazy { ForegroundAppMonitor(this) }
@@ -193,9 +196,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // The console no longer has to be declared: direct mode reads the
-        // resolution out of the frames themselves.
-        findViewById<View>(R.id.cardConsole).visibility = View.GONE
+        // Hidden by default: direct mode reads the resolution out of the
+        // frames. It comes back when screen capture is on the table, because
+        // that route computes RetroArch's viewport from the declared console
+        // and cannot work without one - see updateShimProbeUi.
+        cardConsole = findViewById(R.id.cardConsole)
+        cardConsole.visibility = View.GONE
 
         btnShimProbe = findViewById(R.id.btnShimProbe)
         btnShimDump = findViewById(R.id.btnShimDump)
@@ -296,6 +302,28 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Picks the console from the core name, for the capture route.
+     *
+     * The shim connects and reports which core it is proxying even when that
+     * core renders on the GPU and sends no frames at all - so the console is
+     * known without a single pixel arriving, and the player does not have to
+     * work out that swanstation means PlayStation.
+     *
+     * Only ever a preselection: the picker is right there, and a core that maps
+     * to nothing leaves whatever was chosen before.
+     */
+    private fun preselectConsoleFromCore() {
+        val core = ShimFrameService.coreFile ?: return
+        if (core == lastPreselectedCore) return
+        lastPreselectedCore = core
+        val console = consoleForCore(core) ?: return
+        if (console == ProfilePreference.currentConsole(this)) return
+        ProfilePreference.setConsole(this, console)
+        Log.i(TAG, "capture fallback: $core is ${console.name}, preselected it")
+        updateConsoleLabel()
+    }
+
     private fun confirmRestoreLaunchFiles() {
         AlertDialog.Builder(this)
             .setTitle(R.string.shim_restore)
@@ -310,8 +338,21 @@ class MainActivity : AppCompatActivity() {
     private fun updateShimProbeUi() {
         // Only offered when it is the answer to something: a core that draws
         // on the GPU is the one case direct mode cannot serve.
-        btnShimCapture.visibility =
-            if (ShimFrameService.hardwareRenderedCore) View.VISIBLE else View.GONE
+        /*
+         * A GPU-rendering core is the one case direct mode cannot serve, and
+         * the only case where any of this needs to be visible.
+         *
+         * The console card comes back with the button. Screen capture computes
+         * RetroArch's viewport from the declared console, so it cannot work
+         * without one - and hiding the picker for direct mode quietly took
+         * away the only way to configure the route it was falling back to. The
+         * symptom was a PlayStation drawn to the previous console's dimensions,
+         * with the capture window landing in the middle of the picture.
+         */
+        val needsCapture = ShimFrameService.hardwareRenderedCore
+        btnShimCapture.visibility = if (needsCapture) View.VISIBLE else View.GONE
+        cardConsole.visibility = if (needsCapture) View.VISIBLE else View.GONE
+        if (needsCapture) preselectConsoleFromCore()
 
         val converted = shimConvertedCount
         val total = shimCoreCount
