@@ -153,6 +153,7 @@
     <string name="console_fc" translatable="false">FC/NES</string>
     <string name="console_md" translatable="false">MD/Genesis</string>
     <string name="console_ps1">PS1/Arcade</string>
+    <string name="console_dc">Dreamcast</string>
 
     <!-- Capture window corners -->
     <string name="corner_top_left">Top left</string>
@@ -233,6 +234,8 @@
     <string name="shim_apply">2 · Update the launcher</string>
     <string name="shim_restore">Undo</string>
     <string name="toast_nothing_to_apply">Nothing to update — the launcher already points at every core that is installed.</string>
+    <string name="capture_wont_fit_title">Not enough room on this screen</string>
+    <string name="capture_wont_fit_body">%1$s draws at %2$d×%3$d natively.\n\nScreen recording mirrors this app\'s own output, so RetroArch has to be parked in a corner at native size and the enhanced picture has to fit in what is left. On a %4$d×%5$d screen there is no room for a picture bigger than the original.\n\nThis route cannot help this platform here - it is the screen, not the setup.</string>
     <string name="special_mode_title">Special mode</string>
     <string name="special_mode_desc">This platform is drawn on the GPU, so its picture cannot be read from inside the emulator. Screen recording works for it.</string>
     <string name="special_mode_desc_console">%1$s is drawn on the GPU, so its picture cannot be read from inside the emulator. Screen recording works for it.</string>

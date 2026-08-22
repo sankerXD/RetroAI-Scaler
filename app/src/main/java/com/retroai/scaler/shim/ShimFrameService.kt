@@ -91,7 +91,27 @@ class ShimFrameService : Service() {
         @Volatile var lastRotation = 0
         @Volatile var measuredFps = 0.0
         @Volatile var averageFps = 0.0
-        @Volatile var connected = false
+        /**
+         * How many shims are attached right now.
+         *
+         * A count rather than a flag, because more than one can be: the shim is
+         * linked NODELETE, so a RetroArch that switched core keeps the previous
+         * one mapped with its socket alive. The flag version tracked only the
+         * most recent connection and went false when any of them ended.
+         *
+         * It doubles as the only reliable "is the emulator still alive" signal
+         * this app has. Nothing else answers that question: since Android 5
+         * getRunningAppProcesses returns only our own process, and usage-stats
+         * events cannot tell an activity that stopped from one that was
+         * destroyed. But every game launched through the frontend runs our
+         * shim, in RetroArch's own process, holding a socket - and when
+         * RetroArch exits, the kernel closes it for us. See
+         * OverlayService.updateTargetForegroundState.
+         */
+        private val liveConnections = java.util.concurrent.atomic.AtomicInteger(0)
+
+        /** True while at least one shim - i.e. RetroArch - is attached. */
+        val connected: Boolean get() = liveConnections.get() > 0
 
         /**
          * The loaded core renders on the GPU, so no CPU frames exist to take.
@@ -144,7 +164,7 @@ class ShimFrameService : Service() {
         bytesReceived.set(0)
         measuredFps = 0.0
         averageFps = 0.0
-        connected = false
+        liveConnections.set(0)
         hardwareRenderedCore = false
         coreFile = null
         stopping = false
@@ -162,7 +182,7 @@ class ShimFrameService : Service() {
     override fun onDestroy() {
         stopping = true
         isRunning = false
-        connected = false
+        liveConnections.set(0)
         // Close the socket rather than interrupt: accept() ignores interrupts.
         try {
             server?.close()
@@ -230,13 +250,18 @@ class ShimFrameService : Service() {
              * from the previous game's core: an NES read as a Game Boy Advance.
              */
             Thread({
+                var counted = false
                 try {
-                    handleClient(client)
+                    handleClient(client) { counted = true }
                 } catch (t: Throwable) {
                     say("client ended - ${t.javaClass.simpleName}: ${t.message}")
                 } finally {
+                    // Only decremented for a connection that got as far as
+                    // being counted; handleClient returns early on a bad
+                    // handshake, and a decrement for that would take the count
+                    // negative and read as "the emulator is gone".
+                    if (counted) liveConnections.decrementAndGet()
                     if (this.client === client) {
-                        connected = false
                         this.client = null
                     }
                     try {
@@ -311,7 +336,12 @@ class ShimFrameService : Service() {
         }
     }
 
-    private fun handleClient(client: Socket) {
+    /**
+     * [onCounted] fires once this connection has passed the handshake and been
+     * added to [liveConnections], so the caller knows whether its own `finally`
+     * owes a decrement. Every early return above that point owes nothing.
+     */
+    private fun handleClient(client: Socket, onCounted: () -> Unit) {
         this.client = client
         client.tcpNoDelay = true
         // Bounded for the handshake: a peer that connects and says nothing must
@@ -343,7 +373,8 @@ class ShimFrameService : Service() {
             return
         }
 
-        connected = true
+        liveConnections.incrementAndGet()
+        onCounted()
         // Per connection, and promoted to the shared field only by a frame
         // actually arriving on it. Whichever shim is really running is the one
         // delivering pictures, so that is the one whose core name counts.

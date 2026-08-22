@@ -65,7 +65,8 @@ class RetroArchConfigManager(private val context: Context) {
             ConsoleType.MD to listOf("Genesis Plus GX", "PicoDrive"),
             ConsoleType.PS1 to listOf(
                 "Beetle PSX", "Beetle PSX HW", "PCSX-ReARMed", "SwanStation", "DuckStation"
-            )
+            ),
+            ConsoleType.DC to listOf("Flycast", "Flycast GL", "Redream")
         )
 
         fun hasAllFilesAccess(): Boolean = Environment.isExternalStorageManager()

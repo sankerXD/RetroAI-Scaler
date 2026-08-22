@@ -124,6 +124,7 @@
     <string name="toast_rotate_capture_failed">旋转后录屏重建失败，已停止 AI 增强</string>
 
     <string name="console_ps1">PS1/街机</string>
+    <string name="console_dc">DC 世嘉</string>
 
     <string name="corner_top_left">左上</string>
     <string name="corner_top_right">右上</string>
@@ -191,6 +192,8 @@
     <string name="shim_apply">2 · 覆盖天马G配置</string>
     <string name="shim_restore">撤销</string>
     <string name="toast_nothing_to_apply">没有需要覆盖的——已安装的核心，配置里都已经指向它们了。</string>
+    <string name="capture_wont_fit_title">这块屏幕放不下</string>
+    <string name="capture_wont_fit_body">%1$s 的原生画面是 %2$d×%3$d。\n\n录屏会把本 APP 自己画的东西也拍进去，所以 RA 必须缩到屏幕一角按原生尺寸画着，增强画面只能用剩下的空间。%4$d×%5$d 的屏幕上，剩下的地方放不下一张比原图更大的画面。\n\n这条路线对这个平台在这块屏幕上帮不上忙——是屏幕不够，不是没配好。</string>
     <string name="special_mode_title">特殊模式</string>
     <string name="special_mode_desc">这个平台是 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效。</string>
     <string name="special_mode_desc_console">%1$s 是 GPU 绘制的，没法从模拟器内部取画面。录屏模式对它有效。</string>

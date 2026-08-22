@@ -541,6 +541,12 @@ class OverlayService : Service(), SurfaceHolder.Callback {
     private var targetWasInForeground = false
 
     /**
+     * True once the shim has been seen attached during this capture session,
+     * which is what makes its absence afterwards mean something.
+     */
+    private var sawShimLink = false
+
+    /**
      * Ends a capture session: wipe, drop the notice, stop.
      *
      * The wipe has to run on the frame source's own thread while that thread
@@ -556,6 +562,10 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         // of that situation, so the card goes with it; meeting such a core
         // again is what brings it back.
         HardwareCoreNotice.forget()
+        // The link service was kept alive purely as the emulator's heartbeat.
+        // Leaving it running would leave its "waiting for the emulator"
+        // notification sitting there after everything else has stopped.
+        stopService(Intent(this, ShimFrameService::class.java))
         stopSelf()
     }
 
@@ -575,33 +585,44 @@ class OverlayService : Service(), SurfaceHolder.Callback {
         }
 
         /*
-         * A capture session belongs to one launch of one game, and ends with
-         * it.
+         * A capture session belongs to one launch of one game, and ends when
+         * the emulator EXITS - not when it stops being the foreground app.
          *
-         * Direct mode is the opposite: the emulator leaving is nothing, the
-         * player is checking something and will be back, and tearing the
-         * pipeline down would make switching apps cost a restart. So it pauses,
-         * which is what this whole method is for.
+         * Those are two different facts and the first attempt used the second
+         * one for both, which broke switching away: open Recents, come back to
+         * this app, and the session ended underneath the player.
          *
-         * Capture cannot afford the same generosity. The emulator quitting
-         * (select+B) leaves a session configured for the console that just
-         * ended: RetroArch's viewport override written for it, our sampling
-         * rect predicted for its resolution, a projection still mirroring the
-         * screen. Launch anything else from the frontend and it resumes on the
-         * spot - the reported symptom was the enhanced picture with a small
-         * slab of raw RetroArch magnified into the middle of it, because we
-         * were still sampling a PlayStation-sized rect out of a Game Boy
-         * Advance's full-screen picture.
+         * It has to end on the exit, though. What a finished session leaves
+         * behind is configured for the console that just ran - RetroArch's
+         * viewport override written for it, our sampling rect predicted at its
+         * resolution, a projection still mirroring the screen - and launching
+         * anything else from the frontend resumes it on the spot. The reported
+         * symptom was a slab of raw RetroArch magnified into the middle of the
+         * enhanced picture: still sampling a PlayStation-sized rect out of a
+         * Game Boy Advance's full-screen frame.
          *
-         * Ending it here is also what puts RetroArch's config back and takes
-         * the screen-recording card off the main screen, both of which are
-         * only true once the session is over.
+         * The shim link is what tells the two apart. Every game launched
+         * through the frontend loads our shim inside RetroArch's process, and
+         * it holds a socket to us for as long as that process lives - going to
+         * the background does not close it, and quitting does, whether or not
+         * anything got round to telling us. Nothing else available to an app
+         * can answer this: getRunningAppProcesses returns only our own process,
+         * and usage-stats events cannot separate an activity that stopped from
+         * one that was destroyed.
+         *
+         * Both latches are needed. `targetWasInForeground` because before the
+         * game is running "the link is down" only means the player is on their
+         * way there - past our settings screen, the consent dialog and the
+         * frontend, and past the deliberate close-and-relaunch we just asked
+         * for. `sawShimLink` because a session where the shim never connected
+         * at all (RetroArch started by hand, setup not done) has no signal to
+         * read, and must fall back to pausing rather than guessing.
          */
         if (!shimMode) {
-            if (shouldRender) {
-                targetWasInForeground = true
-            } else if (targetWasInForeground) {
-                Log.i(TAG, "capture: the emulator is gone - ending the session")
+            if (shouldRender) targetWasInForeground = true
+            if (targetWasInForeground && ShimFrameService.connected) sawShimLink = true
+            if (targetWasInForeground && sawShimLink && !ShimFrameService.connected) {
+                Log.i(TAG, "capture: the shim link is gone - the emulator exited, ending the session")
                 endCaptureSession()
                 return
             }
@@ -1162,6 +1183,18 @@ class OverlayService : Service(), SurfaceHolder.Callback {
 
         val src = profile.getSourceRect(screenWidth, screenHeight)
         val out = profile.getOutputRect(screenWidth, screenHeight)
+        if (out.isEmpty) {
+            // No whole multiple fits beside the capture window. Painting the
+            // screen anyway would lay our output over what we sample (§1), so
+            // there is nothing to draw. MainActivity refuses to start such a
+            // session at all; this is the backstop for getting here another way
+            // - a rotation, a console switch under a running session.
+            Log.e(TAG, "no output fits beside the capture window for ${profile.console.name}")
+            if (frameSource?.runOnCaptureThread { nativeBridge.nativeClearOverlay() } != true) {
+                nativeBridge.nativeClearOverlay()
+            }
+            return
+        }
         nativeBridge.nativeSetGeometry(
             src.left, src.top, src.width(), src.height(),
             out.left, out.top, out.width(), out.height(),

@@ -7,6 +7,7 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.util.DisplayMetrics
 import android.view.View
 import java.io.File
 import android.provider.Settings
@@ -656,11 +657,64 @@ class MainActivity : AppCompatActivity() {
             return
         }
         preselectConsoleFromCore()
-        if (ShimFrameService.isRunning) {
-            stopService(Intent(this, ShimFrameService::class.java))
+        if (!capturedPictureWouldFit()) return
+        /*
+         * The link service stays up through a capture session.
+         *
+         * It has no frames to carry - the core renders on the GPU, that is the
+         * whole reason we are here - but the shim still attaches to it from
+         * inside RetroArch and holds that socket for as long as RetroArch
+         * lives. That is the service's real job here: it is the emulator's
+         * heartbeat, and the only way this app can tell "quit" from "in the
+         * background". It used to be stopped right here, which cost nothing
+         * visible and threw that away.
+         */
+        if (!ShimFrameService.isRunning) {
+            ContextCompat.startForegroundService(this, Intent(this, ShimFrameService::class.java))
         }
         val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         screenCaptureLauncher.launch(mpManager.createScreenCaptureIntent())
+    }
+
+    /**
+     * Refuses a capture session that could only draw the picture at 1x, before
+     * asking for the screen-recording permission it would waste.
+     *
+     * Whole-screen capture mirrors our own output, so RetroArch has to be
+     * parked in a corner at native size and the enhanced picture has to fit in
+     * what is left (§1). For a Dreamcast that does not work anywhere: 640x480
+     * native on a 1280x960 panel leaves a largest free band of 1280x464, eight
+     * pixels short of even a 1:1 output, and on a 1920x1080 panel the best that
+     * fits is exactly 1x. An enhanced picture no bigger than the raw one, next
+     * to the raw one, is not a worse result than stopping - it is a wrong one,
+     * and it used to be reached by falling back to painting the whole screen,
+     * which sampled our own output back in.
+     *
+     * So say which platform, which numbers, and that it is the screen rather
+     * than the setup.
+     */
+    private fun capturedPictureWouldFit(): Boolean {
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        val profile = ProfilePreference.load(this)
+        if (profile.getOutputScale(metrics.widthPixels, metrics.heightPixels) >= 2) return true
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.capture_wont_fit_title)
+            .setMessage(
+                getString(
+                    R.string.capture_wont_fit_body,
+                    profile.console.label(this),
+                    profile.console.nativeWidth,
+                    profile.console.nativeHeight,
+                    metrics.widthPixels,
+                    metrics.heightPixels
+                )
+            )
+            .setPositiveButton(R.string.shim_guide_ok, null)
+            .show()
+        return false
     }
 
     /**
