@@ -12,7 +12,7 @@
         translation is free to reorder it.
     -->
     <string name="app_name" translatable="false">RetroAI Scaler</string>
-    <string name="app_subtitle">Real-time AI upscaling layer for RetroArch</string>
+    <string name="app_subtitle">Real-time AI engine for RetroArch emulation</string>
 
     <!-- Main screen: status and the big button -->
     <string name="status_service_running">AI enhancement running</string>

@@ -9,7 +9,7 @@
         Strings absent from this file fall back to values/ (English). That is
         why app_name and the pure-ASCII engine names are not repeated here.
     -->
-    <string name="app_subtitle">RA 模拟器实时 AI 超分外挂层</string>
+    <string name="app_subtitle">RA模拟的实时AI引擎</string>
 
     <string name="status_service_running">AI 增强引擎运行中</string>
     <string name="status_service_stopped">AI 增强引擎已停止</string>
