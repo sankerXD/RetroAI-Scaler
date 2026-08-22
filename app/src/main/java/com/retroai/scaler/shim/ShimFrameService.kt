@@ -385,7 +385,10 @@ class ShimFrameService : Service() {
             if (payload.size < bytes) payload = ByteArray(bytes)
             input.readFully(payload, 0, bytes)
 
-            coreFile = thisCore
+            // Only ever set, never cleared by a frame: a picture arriving
+            // before this connection's notice must not wipe out a name that is
+            // already correct.
+            thisCore?.let { coreFile = it }
             lastWidth = h.getShort(28).toInt() and 0xFFFF
             lastHeight = h.getShort(30).toInt() and 0xFFFF
             lastPitch = h.getInt(24)

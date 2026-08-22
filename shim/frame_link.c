@@ -80,6 +80,7 @@ static bool          g_warned_oversize;
 static atomic_bool   g_hw_render;
 static atomic_bool   g_notice_sent;
 static char          g_core_file[128];
+static uint64_t      g_notice_at_ns;
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -202,6 +203,18 @@ static void *sender_main(void *unused)
             atomic_store(&g_connected, true);
         }
 
+        /* Re-announced every few seconds, not just once on connect.
+         *
+         * Who we are is not something the app can afford to miss: it decides
+         * which console the picture belongs to, and a single notice makes that
+         * depend on the app reading it before the first frame - an ordering
+         * nothing enforces. Repeating it costs a hundred bytes every five
+         * seconds and makes the app's state self-correcting instead. */
+        uint64_t now = now_ns();
+        if (atomic_load(&g_notice_sent) && now - g_notice_at_ns > 5000000000ull) {
+            atomic_store(&g_notice_sent, false);
+        }
+
         if (!atomic_load(&g_notice_sent)) {
             char line[256];
             snprintf(line, sizeof(line), "hw_render=%d\ncore=%s",
@@ -215,7 +228,9 @@ static void *sender_main(void *unused)
             n.timestamp_ns  = now_ns();
             if (send_all(g_sock, &n, sizeof(n)) && send_all(g_sock, line, strlen(line))) {
                 atomic_store(&g_notice_sent, true);
-                LOGI("told the app: %s", line);
+                bool first = (g_notice_at_ns == 0);
+                g_notice_at_ns = now;
+                if (first) LOGI("told the app: %s", line);
             }
         }
 
