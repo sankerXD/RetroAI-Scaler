@@ -230,6 +230,13 @@ static void *sender_main(void *unused)
                 close(g_sock);
                 g_sock = -1;
                 atomic_store(&g_connected, false);
+                /* Back off here too, not only after a FAILED connect. A peer
+                 * that accepts and then dies on the first frame - which is
+                 * exactly what an exception in the app's read loop looks like -
+                 * otherwise puts this into a reconnect loop running dozens of
+                 * times a second, burning CPU inside RetroArch's process and
+                 * burying the real error in its own log spam. */
+                sleep(1);
                 break;
             }
             atomic_fetch_add(&g_published, 1);

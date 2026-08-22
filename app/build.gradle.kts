@@ -170,6 +170,21 @@ val checkScrollEstimator = tasks.register<Exec>("checkScrollEstimator") {
 tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
     .configureEach { dependsOn(checkShaders, checkShadingParity, checkScrollEstimator) }
 
+// Lint runs on DEBUG assembly, not just on release.
+//
+// It exists here for one class of bug: an API newer than minSdk. Those compile
+// without a murmur against compileSdk 34 and throw NoSuchMethodError on the
+// device, which is a handheld an hour of round trips away. One shipped that
+// way - Arrays.equals(byte[], int, int, byte[], int, int) is Java 9, so API 33,
+// against minSdk 30 - and it took the frame link down once per frame while
+// reading, on a machine that could have been told in thirty seconds.
+//
+// Debug rather than release because debug is what gets installed and tested.
+// Gradle caches the result, so an unchanged build skips it; only changed
+// sources pay.
+tasks.matching { it.name == "assembleDebug" }
+    .configureEach { dependsOn("lintDebug") }
+
 // Refuse to assemble a release without real signing credentials.
 //
 // Checked on the task graph rather than in a doFirst: assembleRelease is a

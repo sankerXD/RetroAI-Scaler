@@ -1,4 +1,4 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!--
         ENGLISH IS THE DEFAULT, Chinese lives in values-zh/.
 
@@ -55,8 +55,14 @@
     <!-- Main screen: language -->
     <string name="section_language">Language</string>
     <string name="language_system">Follow system</string>
-    <string name="language_zh">简体中文</string>
-    <string name="language_en">English</string>
+    <!--
+        Not translated on purpose: these two name the languages themselves, and
+        a language is written the same way whichever language you are reading
+        in. "English" in the Chinese UI must still say English, or the person
+        looking for it cannot find it.
+    -->
+    <string name="language_zh" tools:ignore="MissingTranslation">简体中文</string>
+    <string name="language_en" tools:ignore="MissingTranslation">English</string>
     <string name="dialog_pick_language_title">Language</string>
     <string name="toast_language_restart_service">Restart AI enhancement to change the floating menu too</string>
 

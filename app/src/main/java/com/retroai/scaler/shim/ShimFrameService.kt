@@ -365,11 +365,23 @@ class ShimFrameService : Service() {
     private var previousFrame: ByteArray? = null
     private var armedAtMs = 0L
 
+    /**
+     * Hand-rolled rather than Arrays.equals(a, from, to, b, from, to): that
+     * range overload is Java 9, which on Android means API 33, and minSdk here
+     * is 30. It compiles against compileSdk 34 without complaint and throws
+     * NoSuchMethodError on the device - which it did, on the first run, once
+     * per frame, taking the connection down with it each time.
+     */
+    private fun sameBytes(a: ByteArray, b: ByteArray, n: Int): Boolean {
+        if (a.size < n || b.size < n) return false
+        for (i in 0 until n) if (a[i] != b[i]) return false
+        return true
+    }
+
     private fun readyToDump(payload: ByteArray, bytes: Int, now: Long): Boolean {
         if (armedAtMs == 0L) armedAtMs = now
         val prev = previousFrame
-        val still = prev != null && prev.size >= bytes &&
-            java.util.Arrays.equals(prev, 0, bytes, payload, 0, bytes)
+        val still = prev != null && sameBytes(prev, payload, bytes)
         if (still || now - armedAtMs > 5000) {
             armedAtMs = 0L
             if (!still) say("picture never settled - dumping a moving frame, "
